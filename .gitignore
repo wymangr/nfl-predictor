@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.db
+nfl-prediction.pkl
+random_search_checkpoint.pkl
+random_search_results.txt
+.venv/
+*.html
+optimal_features_simple.txt
+backups/*

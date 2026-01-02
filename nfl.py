@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""
+NFL Prediction CLI Tool
+
+A command-line interface for managing NFL data and predictions.
+"""
+
+import click
+
+from src.model.train import train_model
+from src.model.predict import get_future_predictions, get_past_predictions
+from src.config.feature_selection import run_feature_selection
+from src.config.random_search import run_random_search
+from src.data.data import backfil_data
+from src.data.qb_changes import get_qb_change
+from src.data.backup import backup_database
+from src.reports.nfl_past_prediction_report import (
+    generate_past_prediction_report,
+    load_data,
+    save_accuracy_metrics_to_db,
+)
+from src.reports.compare_configs_report import generate_compare_configs_report
+from src.reports.nfl_power_ranking_report import generate_power_rankings_report
+from src.reports.nfl_future_prediction_report import generate_future_predictions_report
+
+
+@click.group()
+def cli():
+    """NFL prediction and data management tool."""
+    pass
+
+
+@cli.group()
+def data():
+    """Data management commands."""
+    pass
+
+
+@data.command()
+@click.option(
+    "--backup",
+    is_flag=True,
+    help="Create a backup of the database before refreshing data.",
+)
+@click.option(
+    "--backfill-date",
+    type=int,
+    default=2003,
+    help="Date to backfill data from (default: 2003).",
+)
+def refresh(backfill_date, backup):
+    """Refresh NFL data from sources."""
+    if backup:
+        backup_database()
+    print("Running: nfl data refresh")
+    backfil_data(backfill_date)
+
+
+@data.command()
+def qb_change():
+    """Identify quarterback changes for the current week."""
+    print("Running: nfl data qb-change")
+    get_qb_change()
+
+
+@cli.group()
+def model():
+    """Model training, optimization, and prediction commands."""
+    pass
+
+
+@model.group()
+def predict():
+    """Prediction commands."""
+    pass
+
+
+@predict.command()
+@click.option(
+    "--year",
+    type=int,
+    default=2025,
+    help="Year to generate predictions for (default: 2025).",
+)
+@click.option(
+    "--report",
+    is_flag=True,
+    help="Generate prediction report after predictions are made.",
+)
+def past(year, report):
+    """Generate predictions for past games."""
+    print("Running: nfl model predict past")
+    get_past_predictions(year)
+    if report:
+        df = load_data()
+        generate_past_prediction_report(df)
+        save_accuracy_metrics_to_db(df)
+
+
+@predict.command()
+@click.option(
+    "--report",
+    is_flag=True,
+    help="Generate prediction report after predictions are made.",
+)
+@click.option(
+    "--year",
+    type=int,
+    default=2025,
+    help="Year to generate predictions for if report is enabled (default: 2025).",
+)
+def future(report, year):
+    """Generate predictions for future games."""
+    print("Running: nfl model predict future")
+    get_future_predictions()
+    if report:
+        get_past_predictions(year)
+        df = load_data()
+        save_accuracy_metrics_to_db(df)
+        generate_future_predictions_report()
+
+
+@model.command()
+def train():
+    """Train the prediction model."""
+    print("Running: nfl model train")
+    train_model()
+
+
+@cli.group()
+def config():
+    """Configuration commands."""
+    pass
+
+
+@config.command()
+def feature_selection():
+    """Perform feature selection for the model."""
+    print("Running: nfl model feature-selection")
+    run_feature_selection()
+
+
+@config.command()
+@click.option(
+    "--iterations",
+    type=int,
+    default=100,
+    help="Number of hyperparameter combinations to test (default: 100).",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=55.0,
+    help="Minimum required 2025 prediction score (default: 55.0).",
+)
+@click.option("--resume", is_flag=True, help="Resume from previous random search run.")
+@click.option(
+    "--min-train-r2",
+    type=float,
+    default=0.27,
+    help="Minimum required training R² (default: 0.27)",
+)
+@click.option(
+    "--min-iterations",
+    type=int,
+    default=20,
+    help="Minimum required early stopping iterations (default: 20)",
+)
+def random_search(iterations, threshold, resume, min_train_r2, min_iterations):
+    """Perform random search for hyperparameter optimization."""
+    print("Running: nfl model random-search")
+    print(
+        f"Parameters: iterations={iterations}, threshold={threshold}, resume={resume}, min_train_r2={min_train_r2}, min_iterations={min_iterations}"
+    )
+    run_random_search(iterations, threshold, resume, min_train_r2, min_iterations)
+
+
+@cli.group()
+def report():
+    """Report generation commands."""
+    pass
+
+
+@report.command()
+def past_predictions():
+    """Generate predictions report."""
+    df = load_data()
+    generate_past_prediction_report(df)
+    save_accuracy_metrics_to_db(df)
+
+
+@report.command()
+def future_predictions():
+    """Generate outlier report for future predictions."""
+    generate_future_predictions_report()
+
+
+@report.command()
+@click.option(
+    "--log-file",
+    type=str,
+    default="random_search_results.txt",
+    help="Path to random_search_results.txt (default: random_search_results.txt)",
+)
+@click.option(
+    "--top-n",
+    type=int,
+    default=None,
+    help="Only evaluate top N configs by original score (default: None)",
+)
+@click.option(
+    "--output-file",
+    type=str,
+    default="config_comparison.html",
+    help="Output HTML file (default: config_comparison.html)",
+)
+def compare_configs(log_file, top_n, output_file):
+    """Generate compare configs report."""
+    generate_compare_configs_report(log_file, top_n, output_file)
+
+
+@click.option(
+    "--season",
+    type=int,
+    default=2025,
+    help="Season year (default: 2025)",
+)
+@report.command()
+def power_rankings(season):
+    """Generate power rankings report."""
+    generate_power_rankings_report(season=season)
+
+
+if __name__ == "__main__":
+    cli()
