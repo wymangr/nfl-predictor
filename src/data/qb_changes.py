@@ -26,10 +26,13 @@ def get_previous_qb(team, current_week, schedule_df):
 def get_qb_change():
     """Identify quarterback changes for the current week."""
     # Load the schedule data
-    schedule_df = nfl.load_schedules(seasons=2025).to_pandas()
+    current_season = nfl.get_current_season()
+    schedule_df = nfl.load_schedules(seasons=current_season).to_pandas()
 
-    # Filter for regular season games only
-    schedule_df = schedule_df[schedule_df["game_type"] == "REG"].copy()
+    # Filter for regular season games only (except current season)
+    schedule_df = schedule_df[
+        (schedule_df["season"] == current_season) | (schedule_df["game_type"] == "REG")
+    ].copy()
 
     # Set the current week
     current_week = nfl.get_current_week()
@@ -70,4 +73,4 @@ def get_qb_change():
     ].sort_values("team")
 
     # Print the results
-    print(qb_changes.to_string(index=False))
+    print(qb_changes.to_csv(index=False, sep="\t"))
