@@ -647,7 +647,6 @@ def backfil_data(backfil_season: int = 2003):
     # Load team stats
     team_stats = nfl.load_team_stats(seasons=seasons, summary_level="week")
     team_stats_df = team_stats.to_pandas()
-    # team_stats_df = team_stats_df[team_stats_df["season_type"] == "REG"]
     team_stats_df = team_stats_df[
         (team_stats_df["season_type"] == "REG")
         | (team_stats_df["season"] == current_year)

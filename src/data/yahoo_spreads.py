@@ -3,6 +3,8 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from sqlalchemy import text
+import pandas as pd
+from pathlib import Path
 
 from src.helpers.database_helpers import get_db_engine
 
@@ -53,6 +55,96 @@ class YahooSpreadClient:
             "Miami": "MIA",
         }
 
+    def backup_to_csv(self, game_spreads):
+        """Backup yahoo spreads to CSV file in yahoo_spread_data directory.
+        Stores all spreads for a season in a single file, updating existing records."""
+        if not game_spreads:
+            return
+
+        # Create directory if it doesn't exist
+        backup_dir = Path("yahoo_spread_data")
+        backup_dir.mkdir(exist_ok=True)
+
+        # Single file per season
+        season = game_spreads[0]["season"]
+        filename = backup_dir / f"yahoo_spreads_{season}.csv"
+
+        # Convert new spreads to DataFrame
+        new_df = pd.DataFrame(game_spreads)
+
+        # Load existing data if file exists
+        if filename.exists():
+            existing_df = pd.read_csv(filename)
+            # Combine and update (new data overwrites old for same week/teams)
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            # Remove duplicates, keeping last (newest) entry
+            combined_df = combined_df.drop_duplicates(
+                subset=["home_team", "away_team", "week", "season"], keep="last"
+            )
+            combined_df = combined_df.sort_values(["week", "home_team"])
+        else:
+            combined_df = new_df.sort_values(["week", "home_team"])
+
+        # Save to CSV
+        combined_df.to_csv(filename, index=False)
+        print(f"✓ Backed up {len(game_spreads)} spreads to {filename}")
+
+    def load_all_from_csv(self):
+        """Load all spreads from all CSV backup files in the directory."""
+        backup_dir = Path("yahoo_spread_data")
+
+        if not backup_dir.exists():
+            return []
+
+        all_spreads = []
+
+        # Find all yahoo spread CSV files in the directory
+        csv_files = list(backup_dir.glob("yahoo_spreads_*.csv"))
+
+        if not csv_files:
+            return []
+
+        # Load data from all season files
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file)
+                all_spreads.extend(df.to_dict("records"))
+                print(f"✓ Loaded {len(df)} spreads from {csv_file.name}")
+            except Exception as e:
+                print(f"Error reading {csv_file}: {e}")
+                continue
+
+        return all_spreads
+
+    def load_from_csv(self, week):
+        """Load spreads from CSV backup for a specific week across all seasons in directory."""
+        backup_dir = Path("yahoo_spread_data")
+
+        if not backup_dir.exists():
+            return []
+
+        all_week_spreads = []
+
+        # Find all yahoo spread CSV files in the directory
+        csv_files = list(backup_dir.glob("yahoo_spreads_*.csv"))
+
+        if not csv_files:
+            return []
+
+        # Load data from all season files
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file)
+                # Filter for the specific week
+                week_df = df[df["week"] == week]
+                if len(week_df) > 0:
+                    all_week_spreads.extend(week_df.to_dict("records"))
+            except Exception as e:
+                print(f"Error reading {csv_file}: {e}")
+                continue
+
+        return all_week_spreads
+
     def save_to_db(self, game_spreads):
         engine = get_db_engine()
         create_table_query = """
@@ -82,15 +174,70 @@ class YahooSpreadClient:
             conn.commit()
 
     def get_all_week_spreads(self):
-        all_spreads = []
-        current_week = nfl.get_current_week()
+        """Load historical spreads from CSV and scrape current season from website.
+        Website data takes precedence over CSV data for matching records."""
 
-        for week in range(5, current_week + 1):
-            week_spreads = self.get_week_spread(week)
-            all_spreads.extend(week_spreads)
+        # First, load all historical data from CSV files
+        print("Loading historical spread data from CSV files...")
+        csv_spreads = self.load_all_from_csv()
+
+        # Convert to DataFrame for easier merging
+        if csv_spreads:
+            csv_df = pd.DataFrame(csv_spreads)
+        else:
+            csv_df = pd.DataFrame(
+                columns=["home_team", "away_team", "week", "season", "yahoo_spread"]
+            )
+
+        # Now scrape website for current season (accumulate without saving)
+        print(f"Scraping website for current season spreads...")
+        current_season = nfl.get_current_season()
+        current_week = nfl.get_current_week()
+        website_spreads = []
+
+        for week in range(1, current_week + 1):
+            week_spreads = self.scrape_current_season_spread(week)
+            website_spreads.extend(week_spreads)
+
+        # Convert website data to DataFrame
+        if website_spreads:
+            website_df = pd.DataFrame(website_spreads)
+
+            # Remove current season data from CSV (will be replaced by website data)
+            csv_df = csv_df[csv_df["season"] != current_season]
+
+            # Combine: CSV historical data + website current season data
+            combined_df = pd.concat([csv_df, website_df], ignore_index=True)
+        else:
+            # No website data, use CSV only
+            combined_df = csv_df
+
+        # Remove any duplicates (shouldn't be any, but just in case)
+        combined_df = combined_df.drop_duplicates(
+            subset=["home_team", "away_team", "week", "season"], keep="last"
+        )
+
+        # Convert back to list of dicts
+        all_spreads = combined_df.to_dict("records")
+
+        # Save all spreads to database at once
+        if all_spreads:
+            print(f"Saving {len(all_spreads)} spreads to database...")
+            self.save_to_db(all_spreads)
+
+        # Backup to CSV - group by season and save each season separately
+        if len(combined_df) > 0:
+            for season in combined_df["season"].unique():
+                season_data = combined_df[combined_df["season"] == season].to_dict(
+                    "records"
+                )
+                self.backup_to_csv(season_data)
+
+        print(f"Total spreads loaded: {len(all_spreads)}")
         return all_spreads
 
-    def get_week_spread(self, week):
+    def scrape_current_season_spread(self, week):
+        """Scrape current seasons spreads for a specific week from Yahoo website."""
 
         url = f"{self.base_url}?gid=&week={week}&type=s"
         resp = requests.get(url)
@@ -113,6 +260,7 @@ class YahooSpreadClient:
             spread = float(spread_match.group(1))
             is_home = "@" in dd.get_text()
             teams.append({"team": team_name, "spread": spread, "is_home": is_home})
+
         # Group every two as a game
         games = []
         for i in range(0, len(teams), 2):
@@ -150,5 +298,5 @@ class YahooSpreadClient:
                     "yahoo_spread": spread,
                 }
             )
-        self.save_to_db(games)
+
         return games

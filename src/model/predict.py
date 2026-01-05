@@ -134,7 +134,7 @@ def get_future_predictions(season=2025):
     week = nfl.get_current_week()
 
     game_to_predict = run_query(
-        f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND (away_score IS NULL OR home_score IS NULL)"
+        f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND (away_score IS NULL OR home_score IS NULL) AND td.yahoo_spread IS NOT NULL"
     )
     games_df = pd.DataFrame(game_to_predict)
     predictions = predict(games_df, model_artifacts)
@@ -168,12 +168,21 @@ def get_past_predictions(season=2025):
     conn = get_db_engine()
 
     model_artifacts = load_model("nfl-prediction.pkl")
-    current_week = nfl.get_current_week()
+    if season != nfl.get_current_season():
+        current_week = run_query(f"SELECT MAX(week) FROM training_data WHERE season = {season}")[0]['MAX(week)']
+        if not current_week:
+            print(f"No data for season {season}.")
+            return 0
+    else:
+        current_week = nfl.get_current_week()
 
     game_to_predict = run_query(
-        f"SELECT * FROM training_data td where td.season == {season} and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) order by week asc"
+        f"SELECT * FROM training_data td where td.season == {season} and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) AND td.yahoo_spread IS NOT NULL order by week asc"
     )
     games_df = pd.DataFrame(game_to_predict)
+    if games_df.empty:
+        print("No games to predict.")
+        return 0
 
     correct = 0
     total = 0
