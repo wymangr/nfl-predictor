@@ -56,16 +56,6 @@ def get_sos(seasons=None):
     else:
         season_filter = ""
 
-    # games_df = pd.read_sql_query(
-    #     text(
-    #         f"""
-    #     SELECT * FROM games
-    #     WHERE game_type = 'REG'
-    #     {season_filter}
-    # """
-    #     ),
-    #     engine,
-    # )
     current_season = nfl.get_current_season()
     current_week = nfl.get_current_week()
 
@@ -73,15 +63,16 @@ def get_sos(seasons=None):
         text(
             f"""
             SELECT * FROM games
-            WHERE game_type = 'REG'
-            AND (
+            WHERE (
                 (season != {current_season} {season_filter})
                 OR (season = {current_season} AND week <= {current_week})
             )
+            AND ((season != {current_season} and game_type = 'REG') OR (season = {current_season}))
             """
         ),
         engine,
     )
+
 
     if len(games_df) == 0:
         print("No completed games found")
@@ -822,31 +813,13 @@ def backfil_data(backfil_season: int = 2003):
 
     df_subset_reindexed.sort_values(["season", "team", "week"], inplace=True)
     team_stats_accumulated = df_subset_reindexed
-    ###
-
-    ## This was the previous simpler version without bye week handling
-    # df_subset = team_stats_df[desired_columns].copy()
-    # df_subset[stats_to_accumulate] = df_subset.groupby(
-    #     ['season', 'team']
-    # )[stats_to_accumulate].cumsum()
-    # team_stats_accumulated = df_subset
 
     # Get game data
     games = nfl.load_schedules(seasons=seasons)
     games_df = games.to_pandas()
-    # games_df = games_df[games_df["game_type"] == "REG"].copy()
     games_df = games_df[
         (games_df["game_type"] == "REG") | (games_df["season"] == current_year)
     ].copy()
-
-    ## DEBUG - ADD THIS TO CUT OF DATA TO TEST PREVIOUS WEEKS DATA
-    # import numpy as np
-    # columns_to_null = [
-    #     'away_score', 'home_score', 'result', 'total', 'overtime',
-    #     'gsis', 'nfl_detail_id', 'temp', 'wind', 'referee'
-    # ]
-    # games_df.loc[(games_df['season'] == 2025) & (games_df['week'] == 15), columns_to_null] = np.nan
-    ##
 
     yahoo_spreads_df = pd.read_sql_table("yahoo_spreads", get_db_engine())
     games_df = pd.merge(
@@ -944,6 +917,7 @@ def backfil_data(backfil_season: int = 2003):
     desired_game_cols = [
         "game_id",
         "season",
+        "game_type",
         "week",
         "away_team",
         "home_team",
@@ -1444,6 +1418,7 @@ def backfil_data(backfil_season: int = 2003):
     cols_to_keep = [
         "game_id",
         "season",
+        "game_type",
         "week",
         "away_team",
         "home_team",
@@ -1746,6 +1721,7 @@ def backfil_data(backfil_season: int = 2003):
     final_columns = [
         "game_id",
         "season",
+        "game_type",
         "week",
         "away_team",
         "home_team",

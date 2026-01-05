@@ -67,19 +67,11 @@ def train_model():
     print("LOADING DATA")
     print("=" * 70)
 
-    ## OLD SPLIT (OLD DATA)
-    # training_data = run_query(f"SELECT * FROM training_data WHERE season < 2025 OR (season == 2025 and week <= 12) ORDER BY season ASC, week ASC")
-
-    ## OLD SPLIT (NEW DATA)
-    # training_data = run_query(f"SELECT * FROM training_data WHERE season <= 2025 ORDER BY season ASC, week ASC")
-
-    ## NEW SPLIT
     training_data = run_query(
-        "SELECT * FROM training_data WHERE season <= 2025 ORDER BY season ASC, week ASC"
+        "SELECT * FROM training_data WHERE (season != 2025 AND game_type = 'REG') OR (season = 2025) ORDER BY season ASC, week ASC"
     )
 
     df = pd.DataFrame(training_data)
-    # df["point_differential"] = df["home_score"] - df["away_score"]
 
     print(f"Loaded {len(df)} games")
     print(f"Seasons: {df['season'].min()} to {df['season'].max()}")
@@ -95,7 +87,6 @@ def train_model():
     model_data, best_features = engineer_features(df)
 
     # Use 'All features combined' (same as random_search.py)
-    # best_features = features
     print(
         f"Using feature set: 'All features combined' with {len(best_features)} features"
     )
@@ -116,15 +107,6 @@ def train_model():
     print("⚠️  Using same split as random_search.py: 70% train / 15% val / 15% test")
 
     model_data_for_split = model_data.copy()
-
-    ## OLD SPLIT
-    # train_idx = int(len(model_data_for_split) * 0.7)
-    # val_idx = int(len(model_data_for_split) * 0.85)
-    # train_df = model_data_for_split.iloc[:train_idx]
-    # val_df = model_data_for_split.iloc[train_idx:val_idx]
-    # test_df = model_data_for_split.iloc[val_idx:]
-
-    ## NEW SPLIT
     train_df = model_data_for_split[model_data_for_split["season"] <= 2023]  # 2023
     val_df = model_data_for_split[model_data_for_split["season"] == 2024]  # 2024
     test_df = model_data_for_split[model_data_for_split["season"] == 2025]  # 2025
