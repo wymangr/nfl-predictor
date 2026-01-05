@@ -1604,12 +1604,6 @@ def generate_compare_configs_report(log_file: str, top_n: int, output_file: str)
 
     # Create splits
     model_data_for_split = model_data.copy()
-    # train_idx = int(len(model_data_for_split) * 0.7)
-    # val_idx = int(len(model_data_for_split) * 0.85)
-
-    # train_df = model_data_for_split.iloc[:train_idx]
-    # val_df = model_data_for_split.iloc[train_idx:val_idx]
-    # test_df = model_data_for_split.iloc[val_idx:]
 
     train_df = model_data_for_split[model_data_for_split["season"] <= 2023]
     val_df = model_data_for_split[model_data_for_split["season"] == 2024]

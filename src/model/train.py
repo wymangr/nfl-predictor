@@ -10,6 +10,8 @@ from src.model.features import (
     TARGET as target,
 )
 from src.helpers.database_helpers import run_query
+from src.model.overfitting import regression_metrics, check_overfitting
+from src.model.predict import get_past_predictions_model
 
 
 def train_model():
@@ -158,8 +160,6 @@ def train_model():
     y_test_pred = model.predict(X_test)
 
     # Calculate metrics
-    from src.model.overfitting import regression_metrics
-
     train_metrics = regression_metrics(y_train, y_train_pred)
     val_metrics = regression_metrics(y_val, y_val_pred)
     test_metrics = regression_metrics(y_test, y_test_pred)
@@ -200,8 +200,6 @@ def train_model():
     print("OVERFITTING ANALYSIS (Train vs Val)")
     print("=" * 70)
 
-    from src.model.overfitting import check_overfitting
-
     report = check_overfitting(
         train_mae=train_metrics["mae"],
         val_mae=val_metrics["mae"],
@@ -222,8 +220,6 @@ def train_model():
     print("\n" + "=" * 70)
     print("2025 HOLDOUT EVALUATION")
     print("=" * 70)
-
-    from src.model.predict import get_past_predictions_model
 
     model_dict = {
         "model": model,

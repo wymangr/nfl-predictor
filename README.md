@@ -63,6 +63,11 @@ This project provides a comprehensive NFL prediction system that:
    ```bash
    .venv\Scripts\activate
    ```
+
+   On Windows (Git Bash):
+   ```bash
+   source .venv/Scripts/activate
+   ```
    
    On macOS/Linux:
    ```bash

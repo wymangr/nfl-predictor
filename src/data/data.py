@@ -2,9 +2,6 @@
 
 import nflreadpy as nfl
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import re
 from sqlalchemy import text
 
 from src.helpers.database_helpers import get_db_engine
@@ -72,7 +69,6 @@ def get_sos(seasons=None):
         ),
         engine,
     )
-
 
     if len(games_df) == 0:
         print("No completed games found")
@@ -530,37 +526,6 @@ def get_sos(seasons=None):
 
     team_performance_final = add_rolling_3week_averages(team_performance_final)
 
-    # Sort by team and time
-    # team_performance_final = team_performance_final.sort_values(
-    #     ["team", "season", "week"]
-    # )
-
-    # # Calculate rolling 3-game average for power_ranking (crosses seasons)
-    # team_performance_final["power_ranking_l3"] = team_performance_final.groupby("team")[
-    #     "power_ranking"
-    # ].transform(lambda x: x.rolling(window=3, min_periods=1).mean())
-
-    # # Calculate rolling 3-game average for win_pct (crosses seasons)
-    # team_performance_final["win_pct_l3"] = team_performance_final.groupby("team")[
-    #     "win_pct"
-    # ].transform(lambda x: x.rolling(window=3, min_periods=1).mean())
-
-    # # Shift to get previous week's 3-game averages (don't include current week)
-    # team_performance_final["prev_power_ranking_l3"] = team_performance_final.groupby(
-    #     "team"
-    # )["power_ranking_l3"].shift(1)
-    # team_performance_final["prev_win_pct_l3"] = team_performance_final.groupby("team")[
-    #     "win_pct_l3"
-    # ].shift(1)
-
-    # # For first game of first season, fill with 0 or neutral values
-    # team_performance_final["prev_power_ranking_l3"] = team_performance_final[
-    #     "prev_power_ranking_l3"
-    # ].fillna(0.5)
-    # team_performance_final["prev_win_pct_l3"] = team_performance_final[
-    #     "prev_win_pct_l3"
-    # ].fillna(0.5)
-
     # Save the adjusted power rankings with rolling averages
     team_performance_final.to_sql(
         "team_power_rankings", engine, if_exists="replace", index=False
@@ -688,10 +653,6 @@ def backfil_data(backfil_season: int = 2003):
         | (team_stats_df["season"] == current_year)
     ].copy()
 
-    ## DEBUG - ADD THIS TO CUT OF DATA TO TEST PREVIOUS WEEKS DATA
-    # team_stats_df = team_stats_df[~((team_stats_df['season'] == 2025) & (team_stats_df['week'] == 15))]
-    ##
-
     # Define desired stats - only use columns that actually exist in the data
     # Basic offense stats that have defensive equivalents
     basic_offense_stats = [
@@ -766,21 +727,6 @@ def backfil_data(backfil_season: int = 2003):
     )
     full_index_df = pd.DataFrame(index=multi_index).reset_index()
 
-    ### I CHANGED THIS ###
-    # full_index_df = full_index_df[
-    #     full_index_df.apply(
-    #         lambda row: row["week"] <= max_week_per_season.get(row["season"], 0), axis=1
-    #     )
-    # ]
-
-    ### THIS ADDS CURRENT WEEK OF DATA INTO SOS ###
-    # full_index_df = full_index_df[
-    #     full_index_df.apply(
-    #         lambda row: row["week"] <= max_week_per_season.get(row["season"], 0) + 1, axis=1
-    #     )
-    # ]
-
-    ### FIX??? ###
     # Determine the max scheduled week for the current season
     schedule_df = nfl.load_schedules(seasons=[current_year]).to_pandas()
     if not schedule_df.empty:
