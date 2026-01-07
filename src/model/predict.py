@@ -1,4 +1,5 @@
 import pickle
+import math
 
 import numpy as np
 import pandas as pd
@@ -140,11 +141,9 @@ def get_future_predictions(season=2025):
     predictions = predict(games_df, model_artifacts)
 
     sorted_predictions = sorted(
-        predictions, key=lambda x: x["cover_spread_by"], reverse=True
+        predictions, key=lambda x: x["confidence"], reverse=False
     )
     print("If Predicted diff is positive, home team is expected to win.")
-    for i, item in enumerate(sorted_predictions):
-        item["confidence"] = i + 1
     for p in sorted_predictions:
         warning = ""
         if (p["home_qb_changed"] == "Y") or (p["away_qb_changed"] == "Y"):
@@ -169,7 +168,9 @@ def get_past_predictions(season=2025):
 
     model_artifacts = load_model("nfl-prediction.pkl")
     if season != nfl.get_current_season():
-        current_week = run_query(f"SELECT MAX(week) FROM training_data WHERE season = {season}")[0]['MAX(week)']
+        current_week = run_query(
+            f"SELECT MAX(week) FROM training_data WHERE season = {season}"
+        )[0]["MAX(week)"]
         if not current_week:
             print(f"No data for season {season}.")
             return 0
@@ -217,16 +218,8 @@ def get_past_predictions(season=2025):
         f"Week {week}: {correct}/{total} ({(correct/total*100) if total > 0 else 0:.2f}%)"
     )
     print(
-        f"Overall Spread Prediction Accuracy for 2025 so far: {overall_correct}/{overall_correct_total} ({((overall_correct)/(overall_correct_total)*100) if (overall_correct_total) > 0 else 0:.2f}%)"
+        f"Overall Spread Prediction Accuracy for {season}: {overall_correct}/{overall_correct_total} ({((overall_correct)/(overall_correct_total)*100) if (overall_correct_total) > 0 else 0:.2f}%)"
     )
-
-    sorted_predictions = sorted(
-        predictions, key=lambda x: (x["week"], x["cover_spread_by"]), reverse=True
-    )
-    for week, games in groupby(sorted_predictions, key=lambda x: x["week"]):
-        games_list = list(games)
-        for i, game in enumerate(games_list):
-            game["confidence"] = i + 1
 
     df = pd.DataFrame(predictions)
     df.to_sql("past_predictions", conn, if_exists="replace", index=False)
@@ -399,6 +392,10 @@ def predict(games_df, model):
                 predicted_winner,
             )
 
+        cover_spread = float(
+            cover_spread_by(game[1][fav], abs_spread, predicted_winner, pidicted_diff),
+        )
+
         prediction = {
             "game_id": game_id,
             "season": season,
@@ -410,11 +407,7 @@ def predict(games_df, model):
             "div_game": game[1]["div_game"],
             "predicted_winner": predicted_winner,
             "predicted_diff": float(pidicted_diff),
-            "cover_spread_by": float(
-                cover_spread_by(
-                    game[1][fav], abs_spread, predicted_winner, pidicted_diff
-                ),
-            ),
+            "cover_spread_by": cover_spread,
             "power_ranking_diff": game[1]["power_ranking_diff"],
             "win_pct_diff": game[1]["win_pct_diff"],
             "avg_weekly_point_diff_l3": game[1]["avg_weekly_point_diff_l3"],
@@ -445,4 +438,13 @@ def predict(games_df, model):
             "correct": correct,
         }
         predictions.append(prediction)
+
+    sorted_predictions = sorted(
+        predictions, key=lambda x: (x["week"], x["cover_spread_by"]), reverse=True
+    )
+    for week, games in groupby(sorted_predictions, key=lambda x: x["week"]):
+        games_list = list(games)
+        for i, game in enumerate(games_list):
+            game["confidence"] = i + 1
+
     return predictions
