@@ -14,7 +14,7 @@ from src.model.overfitting import regression_metrics, check_overfitting
 from src.model.predict import get_past_predictions_model
 
 
-def train_model():
+def train_model(spread_line=False):
     # ============================================================================
     # LOAD HYPERPARAMETERS FROM TUNING
     # ============================================================================
@@ -227,7 +227,7 @@ def train_model():
         "base_features": FEATURE_SELECTION_BASE_FEATURES,
     }
 
-    score_2025 = get_past_predictions_model(model_dict)["overall_accuracy"]
+    score_2025 = get_past_predictions_model(model_dict, spread_line)["overall_accuracy"]
     print(f"\n  Overall 2025 Spread Accuracy: {score_2025:.1f}%")
 
     # ============================================================================

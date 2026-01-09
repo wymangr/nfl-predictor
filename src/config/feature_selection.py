@@ -27,7 +27,7 @@ from src.helpers.database_helpers import run_query
 # ============================================================================
 
 
-def run_feature_selection():
+def run_feature_selection(spread_line=False):
 
     # Load hyperparameters
     with open("best_hyperparameters.json", "r") as f:
@@ -105,7 +105,9 @@ def run_feature_selection():
             "base_features": base_features,
         }
 
-        score_2025 = get_past_predictions_model(model_dict)["overall_accuracy"]
+        score_2025 = get_past_predictions_model(model_dict, spread_line)[
+            "overall_accuracy"
+        ]
         print(f"\n*** 2025 Accuracy: {score_2025:.2f}% ***")
 
         return {

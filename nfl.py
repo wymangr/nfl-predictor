@@ -6,6 +6,7 @@ A command-line interface for managing NFL data and predictions.
 """
 
 import click
+import nflreadpy as nfl
 
 from src.model.train import train_model
 from src.model.predict import get_future_predictions, get_past_predictions
@@ -87,10 +88,15 @@ def predict():
     is_flag=True,
     help="Generate prediction report after predictions are made.",
 )
-def past(year, report):
+@click.option(
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
+)
+def past(year, report, spread_line):
     """Generate predictions for past games."""
     print("Running: nfl model predict past")
-    get_past_predictions(year)
+    get_past_predictions(year, spread_line)
     if report:
         df = load_data()
         generate_past_prediction_report(df)
@@ -104,27 +110,32 @@ def past(year, report):
     help="Generate prediction report after predictions are made.",
 )
 @click.option(
-    "--year",
-    type=int,
-    default=2025,
-    help="Year to generate predictions for if report is enabled (default: 2025).",
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
 )
-def future(report, year):
+def future(report, spread_line):
     """Generate predictions for future games."""
     print("Running: nfl model predict future")
-    get_future_predictions()
+    get_future_predictions(spread_line)
     if report:
-        get_past_predictions(year)
+        current_year = nfl.get_current_season()
+        get_past_predictions(current_year, spread_line)
         df = load_data()
         save_accuracy_metrics_to_db(df)
         generate_future_predictions_report()
 
 
+@click.option(
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
+)
 @model.command()
-def train():
+def train(spread_line):
     """Train the prediction model."""
     print("Running: nfl model train")
-    train_model()
+    train_model(spread_line)
 
 
 @cli.group()
@@ -133,11 +144,16 @@ def config():
     pass
 
 
+@click.option(
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
+)
 @config.command()
-def feature_selection():
+def feature_selection(spread_line):
     """Perform feature selection for the model."""
     print("Running: nfl model feature-selection")
-    run_feature_selection()
+    run_feature_selection(spread_line)
 
 
 @config.command()
@@ -166,13 +182,22 @@ def feature_selection():
     default=20,
     help="Minimum required early stopping iterations (default: 20)",
 )
-def random_search(iterations, threshold, resume, min_train_r2, min_iterations):
+@click.option(
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
+)
+def random_search(
+    iterations, threshold, resume, min_train_r2, min_iterations, spread_line
+):
     """Perform random search for hyperparameter optimization."""
     print("Running: nfl model random-search")
     print(
         f"Parameters: iterations={iterations}, threshold={threshold}, resume={resume}, min_train_r2={min_train_r2}, min_iterations={min_iterations}"
     )
-    run_random_search(iterations, threshold, resume, min_train_r2, min_iterations)
+    run_random_search(
+        iterations, threshold, resume, min_train_r2, min_iterations, spread_line
+    )
 
 
 @cli.group()
@@ -214,9 +239,14 @@ def future_predictions():
     default="config_comparison.html",
     help="Output HTML file (default: config_comparison.html)",
 )
-def compare_configs(log_file, top_n, output_file):
+@click.option(
+    "--spread-line",
+    is_flag=True,
+    help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
+)
+def compare_configs(log_file, top_n, output_file, spread_line):
     """Generate compare configs report."""
-    generate_compare_configs_report(log_file, top_n, output_file)
+    generate_compare_configs_report(log_file, top_n, output_file, spread_line)
 
 
 @click.option(

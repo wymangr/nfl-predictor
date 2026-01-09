@@ -13,7 +13,9 @@ from src.model.overfitting import check_overfitting, regression_metrics
 from src.model.features import ALL_BASE_FEATURES as base_features, TARGET as target
 
 
-def run_random_search(iterations, threshold, resume, min_train_r2, min_iterations):
+def run_random_search(
+    iterations, threshold, resume, min_train_r2, min_iterations, spread_line=False
+):
     print("=" * 80)
     print("NFL HYPERPARAMETER OPTIMIZATION WITH STRICT CONSTRAINTS")
     print("=" * 80)
@@ -304,7 +306,9 @@ def run_random_search(iterations, threshold, resume, min_train_r2, min_iteration
                 "base_features": base_features,
             }
 
-            score_2025 = get_past_predictions_model(model_dict)["overall_accuracy"]
+            score_2025 = get_past_predictions_model(model_dict, spread_line)[
+                "overall_accuracy"
+            ]
 
             if score_2025 >= threshold:
                 print(f"  ✓ PASSED: 2025 score = {score_2025:.1f}% (>= {threshold}%)")
@@ -700,7 +704,9 @@ def run_random_search(iterations, threshold, resume, min_train_r2, min_iteration
         "features": best_features,
         "base_features": base_features,
     }
-    final_2025_score = get_past_predictions_model(final_model_dict)["overall_accuracy"]
+    final_2025_score = get_past_predictions_model(final_model_dict, spread_line)[
+        "overall_accuracy"
+    ]
     print(f"\n  2025 Spread Accuracy: {final_2025_score:.1f}%")
     if abs(final_2025_score - best_result["score_2025"]) < 0.1:
         print(f"  ✓ Consistent with search result ({best_result['score_2025']:.1f}%)")

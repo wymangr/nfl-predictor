@@ -91,6 +91,7 @@ def train_and_evaluate_config(
     y_test,
     best_features,
     base_features,
+    spread_line=False,
 ) -> dict:
     """Train a model with given config and return evaluation metrics."""
 
@@ -144,7 +145,7 @@ def train_and_evaluate_config(
         "base_features": base_features,
     }
     # week_by_week_2025 = get_2025_week_by_week_results(model_dict)
-    week_by_week_2025 = get_past_predictions_model(model_dict)
+    week_by_week_2025 = get_past_predictions_model(model_dict, spread_line)
     score_2025 = week_by_week_2025["overall_accuracy"]
 
     # Get feature importance
@@ -1554,7 +1555,9 @@ def get_current_config() -> dict:
     return config
 
 
-def generate_compare_configs_report(log_file: str, top_n: int, output_file: str):
+def generate_compare_configs_report(
+    log_file: str, top_n: int, output_file: str, spread_line: bool = False
+):
 
     current_config = get_current_config()
     # Check if log file exists
@@ -1639,6 +1642,7 @@ def generate_compare_configs_report(log_file: str, top_n: int, output_file: str)
                 y_test,
                 best_features,
                 base_features,
+                spread_line,
             )
             results.append(result)
             print(

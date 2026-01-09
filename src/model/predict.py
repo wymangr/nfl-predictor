@@ -128,17 +128,21 @@ def cover_spread_by(
     return 0
 
 
-def get_future_predictions(season=2025):
+def get_future_predictions(spread_line=False):
 
     conn = get_db_engine()
     model_artifacts = load_model("nfl-prediction.pkl")
     week = nfl.get_current_week()
+    season = nfl.get_current_season()
+
+    if spread_line:
+        print("Using nflreadpy spread line for predictions.")
 
     game_to_predict = run_query(
         f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND (away_score IS NULL OR home_score IS NULL) AND td.yahoo_spread IS NOT NULL"
     )
     games_df = pd.DataFrame(game_to_predict)
-    predictions = predict(games_df, model_artifacts)
+    predictions = predict(games_df, model_artifacts, spread_line)
 
     sorted_predictions = sorted(
         predictions, key=lambda x: x["confidence"], reverse=False
@@ -162,9 +166,11 @@ def get_future_predictions(season=2025):
     df.to_sql("future_predictions", conn, if_exists="replace", index=False)
 
 
-def get_past_predictions(season=2025):
+def get_past_predictions(season=2025, spread_line=False):
 
     conn = get_db_engine()
+    if spread_line:
+        print("Using nflreadpy spread line for predictions.")
 
     model_artifacts = load_model("nfl-prediction.pkl")
     if season != nfl.get_current_season():
@@ -192,7 +198,7 @@ def get_past_predictions(season=2025):
     overall_correct = 0
     overall_correct_total = 0
 
-    predictions = predict(games_df, model_artifacts)
+    predictions = predict(games_df, model_artifacts, spread_line)
 
     for prediction in sorted(predictions, key=lambda x: (x["week"])):
         if prediction["week"] != week:
@@ -231,9 +237,12 @@ def get_past_predictions(season=2025):
     )
 
 
-def get_past_predictions_model(model):
+def get_past_predictions_model(model, spread_line=False):
     """Get week-by-week 2025 results with consistency metrics."""
     current_week = nfl.get_current_week()
+
+    if spread_line:
+        print("Using nflreadpy spread line for predictions.")
 
     game_to_predict = run_query(
         f"SELECT * FROM training_data td where td.season == 2025 and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) order by week asc"
@@ -247,7 +256,7 @@ def get_past_predictions_model(model):
     overall_correct = 0
     overall_correct_total = 0
 
-    predictions = predict(games_df, model)
+    predictions = predict(games_df, model, spread_line)
 
     week_results = {}
     weekly_accuracies = []
@@ -314,7 +323,7 @@ def check_correct_prediction(
     return predicted_winner == winner_over_spread
 
 
-def predict(games_df, model):
+def predict(games_df, model, spread_line=False):
 
     predictions = []
 
@@ -322,7 +331,11 @@ def predict(games_df, model):
         features = model["features"]
         season = game[1]["season"]
         week = game[1]["week"]
-        spread = game[1]["yahoo_spread"]
+        if spread_line:
+            spread = game[1]["spread_line"]
+            spread = -spread
+        else:
+            spread = game[1]["yahoo_spread"]
         qb_change = check_qb_change(season, week)
 
         if spread < 0:

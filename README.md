@@ -125,24 +125,25 @@ nfl data qb-change
 
 ```bash
 # Train the prediction model
-nfl model train
+nfl model train [--spread-line]
 
 # Generate predictions for past games (validation)
-nfl model predict past [--year YEAR] [--report]
+nfl model predict past [--year YEAR] [--report] [--spread-line]
 
 # Generate predictions for future games
-nfl model predict future [--report] [--year YEAR]
+nfl model predict future [--report] [--spread-line]
 ```
 
 **Options:**
 - `--year YEAR`: Specify the year for predictions (default: 2025)
 - `--report`: Generate an HTML report after predictions
+- `--spread-line`: Use the nflreadpy spread line for predictions instead of Yahoo spread
 
 #### Configuration & Optimization
 
 ```bash
 # Run feature selection analysis
-nfl config feature-selection
+nfl config feature-selection [--spread-line]
 
 # Perform hyperparameter optimization via random search
 nfl config random-search [OPTIONS]
@@ -154,6 +155,7 @@ nfl config random-search [OPTIONS]
 - `--resume`: Resume from a previous random search run
 - `--min-train-r2 N`: Minimum required training R² (default: 0.27)
 - `--min-iterations N`: Minimum required early stopping iterations (default: 20)
+- `--spread-line`: Use the nflreadpy spread line for predictions instead of Yahoo spread
 
 #### Reports
 
@@ -175,6 +177,7 @@ nfl report compare-configs [OPTIONS]
 - `--log-file PATH`: Path to random_search_results.txt (default: random_search_results.txt)
 - `--top-n N`: Only evaluate top N configs by original score
 - `--output-file PATH`: Output HTML file (default: config_comparison.html)
+- `--spread-line`: Use the nflreadpy spread line for predictions instead of Yahoo spread
 
 
 ## Model Details
