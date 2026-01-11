@@ -168,9 +168,11 @@ def get_future_predictions(spread_line=False):
 
 def get_past_predictions(season=2025, spread_line=False):
 
+    spread_column = "yahoo_spread"
     conn = get_db_engine()
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
+        spread_column = "spread_line"
 
     model_artifacts = load_model("nfl-prediction.pkl")
     if season != nfl.get_current_season():
@@ -184,7 +186,7 @@ def get_past_predictions(season=2025, spread_line=False):
         current_week = nfl.get_current_week()
 
     game_to_predict = run_query(
-        f"SELECT * FROM training_data td where td.season == {season} and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) AND td.yahoo_spread IS NOT NULL order by week asc"
+        f"SELECT * FROM training_data td where td.season == {season} and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) AND td.{spread_column} IS NOT NULL order by week asc"
     )
     games_df = pd.DataFrame(game_to_predict)
     if games_df.empty:
