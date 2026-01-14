@@ -119,8 +119,6 @@ def future(report, spread_line):
     print("Running: nfl model predict future")
     get_future_predictions(spread_line)
     if report:
-        current_year = nfl.get_current_season()
-        get_past_predictions(current_year, spread_line)
         df = load_data()
         save_accuracy_metrics_to_db(df)
         generate_future_predictions_report()

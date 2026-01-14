@@ -128,12 +128,33 @@ def cover_spread_by(
     return 0
 
 
+def confidence_accuracy(confidence_score: float) -> str:
+    confidence_accuracy = run_query(
+        f"""SELECT 
+            AVG(CAST(correct AS FLOAT)) * 100 AS accuracy_percentage,
+            COUNT(*) AS sample_size
+        FROM past_predictions
+        WHERE confidence_score BETWEEN ({confidence_score} - 3) AND ({confidence_score} + 3)
+            AND correct != 'push';"""
+    )
+    if confidence_accuracy[0]["sample_size"] == 0:
+        return math.nan, 0
+
+    return (
+        confidence_accuracy[0]["accuracy_percentage"],
+        confidence_accuracy[0]["sample_size"],
+    )
+
+
 def get_future_predictions(spread_line=False):
 
     conn = get_db_engine()
     model_artifacts = load_model("nfl-prediction.pkl")
     week = nfl.get_current_week()
     season = nfl.get_current_season()
+
+    # Run past predictions to update past data for confidence metrics
+    get_past_predictions(season=season, spread_line=spread_line, quiet=True)
 
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
@@ -159,19 +180,30 @@ def get_future_predictions(spread_line=False):
             home_away = "Home"
         else:
             home_away = "Away"
+
+        confidence_acc, sample_size = confidence_accuracy(p["confidence_score"])
         print(
-            f"Predicted winner over the {p['spread']} spread: \t{p['predicted_winner']} ({home_away}) \twith confidence rank {p['confidence']} by {p['cover_spread_by']:.2f} - Predicted diff: {p['predicted_diff']:.2f}   \t{warning}"
+            f"Pick: {p['predicted_winner']} ({home_away}) \t"
+            f"Spread: {p['spread']} (Fav {p['spread_favorite']})\t"
+            f"Cover by: {p['cover_spread_by']:.2f}\t"
+            f"Predicted Diff: {p['predicted_diff']:.2f}\t"
+            f"Confidence: {p['confidence']}\t"
+            f"Confidence Score: {p['confidence_score']:.2f} \t"
+            f"Confidence Accuracy: {confidence_acc:.2f}% (Sample Size: {sample_size})\t"
+            f"{warning}"
         )
+
     df = pd.DataFrame(predictions)
     df.to_sql("future_predictions", conn, if_exists="replace", index=False)
 
 
-def get_past_predictions(season=2025, spread_line=False):
+def get_past_predictions(season=2025, spread_line=False, quiet=False):
 
     spread_column = "yahoo_spread"
     conn = get_db_engine()
     if spread_line:
-        print("Using nflreadpy spread line for predictions.")
+        if not quiet:
+            print("Using nflreadpy spread line for predictions.")
         spread_column = "spread_line"
 
     model_artifacts = load_model("nfl-prediction.pkl")
@@ -180,7 +212,7 @@ def get_past_predictions(season=2025, spread_line=False):
             f"SELECT MAX(week) FROM training_data WHERE season = {season}"
         )[0]["MAX(week)"]
         if not current_week:
-            print(f"No data for season {season}.")
+            print(f"No data for season {season} to make past predictions.")
             return 0
     else:
         current_week = nfl.get_current_week()
@@ -190,7 +222,7 @@ def get_past_predictions(season=2025, spread_line=False):
     )
     games_df = pd.DataFrame(game_to_predict)
     if games_df.empty:
-        print("No games to predict.")
+        print("No past games to predict.")
         return 0
 
     correct = 0
@@ -204,9 +236,10 @@ def get_past_predictions(season=2025, spread_line=False):
 
     for prediction in sorted(predictions, key=lambda x: (x["week"])):
         if prediction["week"] != week:
-            print(
-                f"Week {week}: {correct}/{total} ({(correct/total*100) if total > 0 else 0:.2f}%)"
-            )
+            if not quiet:
+                print(
+                    f"Week {week}: {correct}/{total} ({(correct/total*100) if total > 0 else 0:.2f}%)"
+                )
             week = prediction["week"]
             correct = 0
             total = 0
@@ -222,12 +255,13 @@ def get_past_predictions(season=2025, spread_line=False):
             total += 1
             overall_correct_total += 1
 
-    print(
-        f"Week {week}: {correct}/{total} ({(correct/total*100) if total > 0 else 0:.2f}%)"
-    )
-    print(
-        f"Overall Spread Prediction Accuracy for {season}: {overall_correct}/{overall_correct_total} ({((overall_correct)/(overall_correct_total)*100) if (overall_correct_total) > 0 else 0:.2f}%)"
-    )
+    if not quiet:
+        print(
+            f"Week {week}: {correct}/{total} ({(correct/total*100) if total > 0 else 0:.2f}%)"
+        )
+        print(
+            f"Overall Spread Prediction Accuracy for {season}: {overall_correct}/{overall_correct_total} ({((overall_correct)/(overall_correct_total)*100) if (overall_correct_total) > 0 else 0:.2f}%)"
+        )
 
     df = pd.DataFrame(predictions)
     df.to_sql("past_predictions", conn, if_exists="replace", index=False)
@@ -411,6 +445,16 @@ def predict(games_df, model, spread_line=False):
             cover_spread_by(game[1][fav], abs_spread, predicted_winner, pidicted_diff),
         )
 
+        FIXED_MAX_UNCERTAINTY = 10.0
+        uncertainty = (
+            abs(game[1]["rushing_epa_diff"]) / 50 * 0.20
+            + abs(game[1]["yards_per_carry_diff"]) * 0.25
+            + abs((game[1]["spread_line"] * -1) - spread) * 0.30
+            + abs(cover_spread) * 0.20
+            + abs(game[1]["power_ranking_diff_l3"]) * 0.05
+        )
+        confidence_score = 100 - min((uncertainty / FIXED_MAX_UNCERTAINTY * 100), 100)
+
         prediction = {
             "game_id": game_id,
             "season": season,
@@ -451,11 +495,12 @@ def predict(games_df, model, spread_line=False):
             "def_rushing_yards_diff": game[1].get("def_rushing_yards_diff", None),
             "passing_yards_diff": game[1].get("passing_yards_diff", None),
             "correct": correct,
+            "confidence_score": confidence_score,
         }
         predictions.append(prediction)
 
     sorted_predictions = sorted(
-        predictions, key=lambda x: (x["week"], x["cover_spread_by"]), reverse=True
+        predictions, key=lambda x: (x["week"], x["confidence_score"]), reverse=False
     )
     for week, games in groupby(sorted_predictions, key=lambda x: x["week"]):
         games_list = list(games)
