@@ -14,6 +14,7 @@ from src.config.feature_selection import run_feature_selection
 from src.config.random_search import run_random_search
 from src.config.optimize_confidence import run_optimization
 from src.data.data import backfil_data
+from src.data.update_spreads import update_current_spreads
 from src.data.qb_changes import get_qb_change
 from src.data.backup import backup_database
 from src.reports.nfl_past_prediction_report import (
@@ -50,12 +51,20 @@ def data():
     default=2003,
     help="Date to backfill data from (default: 2003).",
 )
-def refresh(backfill_date, backup):
+@click.option(
+    "--spreads",
+    is_flag=True,
+    help="Update current spread data only.",
+)
+def refresh(backfill_date, backup, spreads):
     """Refresh NFL data from sources."""
+    print("Running: nfl data refresh")
     if backup:
         backup_database()
-    print("Running: nfl data refresh")
-    backfil_data(backfill_date)
+    if spreads:
+        update_current_spreads()
+    else:
+        backfil_data(backfill_date)
 
 
 @data.command()

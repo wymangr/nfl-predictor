@@ -111,7 +111,7 @@ After setup, you can use the `nfl` command (if you set up the alias) or `python 
 
 ```bash
 # Refresh NFL data from sources
-nfl data refresh [--backup] [--backfill-date YEAR]
+nfl data refresh [--backup] [--backfill-date YEAR] [--spreads]
 
 # Identify quarterback changes for the current week
 nfl data qb-change
@@ -120,6 +120,7 @@ nfl data qb-change
 **Options:**
 - `--backup`: Create a database backup before refreshing data
 - `--backfill-date YEAR`: Specify the starting year for data backfill (default: 2003)
+- `--spreads`: Update current week spread data only (faster, for weekly updates)
 
 #### Model Operations
 
