@@ -142,12 +142,23 @@ nfl model predict future [--report] [--spread-line]
 #### Configuration & Optimization
 
 ```bash
+# Optimize the confidence formula to maximize confidence points
+nfl config optimize-confidence [OPTIONS]
+
 # Run feature selection analysis
 nfl config feature-selection [--spread-line]
 
 # Perform hyperparameter optimization via random search
 nfl config random-search [OPTIONS]
 ```
+
+**Optimize Confidence Options:**
+- `--granularity LEVEL`: Search density - 'coarse' (fast, default), 'fine' (balanced), or 'ultra' (slow but thorough)
+- `--min-features N`: Minimum number of features in each combination (default: 3)
+- `--max-features N`: Maximum number of features in each combination (default: 7)
+- `--workers N`: Number of parallel workers (default: auto-detect CPU count). Use 1 to disable multiprocessing
+- `--verify`: Run verification check before optimization to ensure calculations work correctly
+- `--top-features N`: Only consider top N features by correlation with correct predictions (default: 12)
 
 **Random Search Options:**
 - `--iterations N`: Number of hyperparameter combinations to test (default: 100)

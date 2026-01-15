@@ -12,6 +12,7 @@ from src.model.train import train_model
 from src.model.predict import get_future_predictions, get_past_predictions
 from src.config.feature_selection import run_feature_selection
 from src.config.random_search import run_random_search
+from src.config.optimize_confidence import run_optimization
 from src.data.data import backfil_data
 from src.data.qb_changes import get_qb_change
 from src.data.backup import backup_database
@@ -140,6 +141,52 @@ def train(spread_line):
 def config():
     """Configuration commands."""
     pass
+
+
+@config.command()
+@click.option(
+    "--granularity",
+    type=click.Choice(["coarse", "fine", "ultra"]),
+    default="coarse",
+    help="Search granularity: coarse (fast, default), fine (balanced), ultra (slow but thorough).",
+)
+@click.option(
+    "--min-features",
+    type=int,
+    default=3,
+    help="Minimum number of features in each combination. Default: 3",
+)
+@click.option(
+    "--max-features",
+    type=int,
+    default=7,
+    help="Maximum number of features in each combination. Default: 7",
+)
+@click.option(
+    "--workers",
+    type=int,
+    default=None,
+    help="Number of parallel workers (default: auto-detect CPU count). Use 1 to disable multiprocessing.",
+)
+@click.option(
+    "--verify",
+    is_flag=True,
+    help="Run verification check before optimization to ensure calculations work correctly.",
+)
+@click.option(
+    "--top-features",
+    type=int,
+    default=12,
+    help="Only consider top N features by correlation with correct predictions. Default: 12",
+)
+def optimize_confidence(
+    granularity, min_features, max_features, workers, verify, top_features
+):
+    """Optimize the confidence formula to maximize confidence points for correct predictions."""
+    print("Running: nfl config optimize-confidence")
+    run_optimization(
+        granularity, min_features, max_features, workers, verify, top_features
+    )
 
 
 @click.option(

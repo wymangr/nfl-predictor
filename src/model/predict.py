@@ -10,6 +10,44 @@ from src.model.features import engineer_features
 from src.helpers.database_helpers import run_query, get_db_engine
 
 
+def get_confidence_score(game_data, uncertainty=None) -> float:
+    """
+    Calculate confidence score for a game prediction.
+
+    This is the single source of truth for the confidence score formula.
+    When optimizing, update this function with the new formula.
+
+    Two modes of operation:
+    1. If uncertainty is provided: directly converts uncertainty to confidence score
+    2. If game_data is provided: calculates uncertainty from features, then converts to confidence
+
+    Args:
+        game_data: Dictionary/Series with game features including:
+                   - spread (absolute value)
+                   - cover_spread_by (can be positive or negative)
+                   - other game features
+                   Can be None if uncertainty is provided directly.
+        uncertainty: Optional pre-calculated uncertainty value.
+                     If provided, skips feature-based calculation.
+
+    Returns:
+        float: confidence score value (0-100)
+    """
+    FIXED_MAX_UNCERTAINTY = 10.0
+    if uncertainty is None:
+        uncertainty = (
+            game_data["spread"] / 11 * 0.243
+            + abs(game_data["cover_spread_by"]) * 0.186
+            + abs(game_data["yards_per_carry_diff"]) * 0.067
+            + abs(game_data["predicted_diff"]) / 5 * 0.068
+            + abs(game_data["rushing_epa_diff"]) / 50 * 0.226
+            + abs(game_data["power_ranking_diff_l3"]) * 0.210
+        )
+
+    confidence_score = 100 - min((uncertainty / FIXED_MAX_UNCERTAINTY * 100), 100)
+    return confidence_score
+
+
 def check_qb_change(season: int, week: int) -> str:
 
     query = f"""
@@ -445,15 +483,11 @@ def predict(games_df, model, spread_line=False):
             cover_spread_by(game[1][fav], abs_spread, predicted_winner, pidicted_diff),
         )
 
-        FIXED_MAX_UNCERTAINTY = 10.0
-        uncertainty = (
-            abs(game[1]["rushing_epa_diff"]) / 50 * 0.20
-            + abs(game[1]["yards_per_carry_diff"]) * 0.25
-            + abs((game[1]["spread_line"] * -1) - spread) * 0.30
-            + abs(cover_spread) * 0.20
-            + abs(game[1]["power_ranking_diff_l3"]) * 0.05
-        )
-        confidence_score = 100 - min((uncertainty / FIXED_MAX_UNCERTAINTY * 100), 100)
+        game_data = dict(game[1])
+        game_data["spread"] = abs_spread
+        game_data["cover_spread_by"] = cover_spread
+        game_data["predicted_diff"] = float(pidicted_diff)
+        confidence_score = get_confidence_score(game_data)
 
         prediction = {
             "game_id": game_id,
