@@ -129,14 +129,14 @@ nfl data qb-change
 nfl model train [--spread-line]
 
 # Generate predictions for past games (validation)
-nfl model predict past [--year YEAR] [--report] [--spread-line]
+nfl model predict past [--year YEAR|YEARS|all] [--report] [--spread-line]
 
 # Generate predictions for future games
 nfl model predict future [--report] [--spread-line]
 ```
 
 **Options:**
-- `--year YEAR`: Specify the year for predictions (default: 2025)
+- `--year YEAR|YEARS|all`: Specify year(s) for predictions. Can be a single year (2025), multiple comma-separated years (2024,2025), or 'all' for all available seasons (default: 2025)
 - `--report`: Generate an HTML report after predictions
 - `--spread-line`: Use the nflreadpy spread line for predictions instead of Yahoo spread
 

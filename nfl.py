@@ -89,9 +89,9 @@ def predict():
 @predict.command()
 @click.option(
     "--year",
-    type=int,
-    default=2025,
-    help="Year to generate predictions for (default: 2025).",
+    type=str,
+    default="2025",
+    help="Year(s) to generate predictions for. Can be a single year (2025), multiple years (2024,2025), or 'all' (default: 2025).",
 )
 @click.option(
     "--report",
