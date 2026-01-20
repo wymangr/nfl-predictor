@@ -722,7 +722,7 @@ def backfil_data(backfil_season: int = 2003):
     max_week_per_season = df_subset.groupby("season")["week"].max().to_dict()
 
     multi_index = pd.MultiIndex.from_product(
-        [all_seasons, all_teams, range(1, 20)], names=["season", "team", "week"]
+        [all_seasons, all_teams, range(1, 23)], names=["season", "team", "week"]
     )
     full_index_df = pd.DataFrame(index=multi_index).reset_index()
 
