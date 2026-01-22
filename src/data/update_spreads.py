@@ -89,6 +89,10 @@ def update_current_spreads():
             )
         conn.commit()
 
+    # Backup yahoo spreads to CSV file
+    if yahoo_spread_data:
+        client.backup_to_csv(yahoo_spread_data)
+
     print(f"Updated spread data for Week {current_week}, {current_season}")
     print(f"  - Yahoo spreads updated: {len(yahoo_spread_data)} games")
     print(f"  - Spread lines updated: {len(spread_line_data)} games")
