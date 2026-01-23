@@ -238,12 +238,12 @@ def get_future_predictions(spread_line=False):
 def get_past_predictions(season="2025", spread_line=False, quiet=False):
     """
     Generate predictions for past games.
-    
+
     Args:
         season: Can be a single year (2025 or "2025"), multiple years ("2024,2025"), or "all"
         spread_line: Whether to use spread_line or yahoo_spread
         quiet: Whether to suppress output
-    
+
     Returns:
         Overall accuracy percentage
     """
@@ -261,7 +261,7 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
     else:
         # Parse comma-separated years
         seasons = [int(y.strip()) for y in str(season).split(",")]
-    
+
     spread_column = "yahoo_spread"
     conn = get_db_engine()
     if spread_line:
@@ -270,16 +270,16 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
         spread_column = "spread_line"
 
     model_artifacts = load_model("nfl-prediction.pkl")
-    
+
     all_predictions = []
     season_accuracies = {}
-    
+
     for season_year in seasons:
         if not quiet and len(seasons) > 1:
             print(f"\n{'='*70}")
             print(f"Processing Season {season_year}")
             print(f"{'='*70}")
-        
+
         if season_year != nfl.get_current_season():
             current_week = run_query(
                 f"SELECT MAX(week) FROM training_data WHERE season = {season_year}"
@@ -337,7 +337,7 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
             print(
                 f"Overall Spread Prediction Accuracy for {season_year}: {overall_correct}/{overall_correct_total} ({((overall_correct)/(overall_correct_total)*100) if (overall_correct_total) > 0 else 0:.2f}%)"
             )
-        
+
         season_accuracy = (
             (overall_correct) / (overall_correct_total) * 100
             if (overall_correct_total) > 0
@@ -345,12 +345,12 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
         )
         season_accuracies[season_year] = season_accuracy
         all_predictions.extend(predictions)
-    
+
     # Save all predictions to database
     if all_predictions:
         df = pd.DataFrame(all_predictions)
         df.to_sql("past_predictions", conn, if_exists="replace", index=False)
-        
+
         # Print summary if multiple seasons
         if len(seasons) > 1 and not quiet:
             print(f"\n{'='*70}")
@@ -361,13 +361,17 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
             avg_accuracy = sum(season_accuracies.values()) / len(season_accuracies)
             print(f"\nAverage Accuracy: {avg_accuracy:.2f}%")
             print(f"{'='*70}")
-        
+
         # Return the most recent season's accuracy or average if multiple
         if len(seasons) == 1:
             return season_accuracies.get(seasons[0], 0)
         else:
-            return sum(season_accuracies.values()) / len(season_accuracies) if season_accuracies else 0
-    
+            return (
+                sum(season_accuracies.values()) / len(season_accuracies)
+                if season_accuracies
+                else 0
+            )
+
     return 0
 
 
