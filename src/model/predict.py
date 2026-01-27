@@ -197,10 +197,14 @@ def get_future_predictions(spread_line=False):
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
 
-    game_to_predict = run_query(
+    games_to_predict = run_query(
         f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND (away_score IS NULL OR home_score IS NULL) AND td.yahoo_spread IS NOT NULL"
     )
-    games_df = pd.DataFrame(game_to_predict)
+    if len(games_to_predict) == 0:
+        print(f"No future games to predict for Week {week}, {season}.")
+        return
+
+    games_df = pd.DataFrame(games_to_predict)
     predictions = predict(games_df, model_artifacts, spread_line)
 
     sorted_predictions = sorted(
