@@ -8,6 +8,11 @@ from itertools import groupby
 
 from src.model.features import engineer_features
 from src.helpers.database_helpers import run_query, get_db_engine
+from src.reports.past_predictions_analysis import (
+    get_bucket_analysis,
+    classify_prediction_bucket,
+    calculate_bucket_confidence,
+)
 
 
 def get_confidence_score(game_data, uncertainty=None) -> float:
@@ -184,7 +189,74 @@ def confidence_accuracy(confidence_score: float) -> str:
     )
 
 
-def get_future_predictions(spread_line=False):
+def get_bucket_confidence_accuracy(prediction_dict, bucket_df):
+    """
+    Calculate bucket-based confidence and accuracy for a single prediction.
+
+    Args:
+        prediction_dict: Dictionary with prediction metrics
+        bucket_df: DataFrame with bucket analysis data
+
+    Returns:
+        tuple: (bucket_confidence, bucket_accuracy, sample_size) or (None, None, 0) if unable to calculate
+    """
+    # Use shared function to calculate bucket confidence
+    weighted_acc, bucket_details = calculate_bucket_confidence(
+        prediction_dict, bucket_df
+    )
+
+    if weighted_acc is None:
+        return None, None, 0
+
+    # Now calculate all past predictions' bucket confidence to determine 1% bracket accuracy
+    # Get all past predictions with their metrics
+    past_games = run_query(
+        """
+        SELECT *
+        FROM past_predictions
+        WHERE correct != 'push'
+    """
+    )
+
+    if not past_games:
+        return weighted_acc, None, 0
+
+    # Calculate bucket confidence for each past game using shared function
+    past_bucket_confidences = []
+    for game in past_games:
+        # Use shared function to calculate bucket confidence for this past game
+        game_weighted_acc, _ = calculate_bucket_confidence(game, bucket_df)
+
+        if game_weighted_acc is not None:
+            past_bucket_confidences.append(
+                {
+                    "bucket_confidence": game_weighted_acc,
+                    "correct": game["correct"] == "1",
+                }
+            )
+
+    # Find which 1% bracket this game falls into
+    bucket_min = int(weighted_acc)
+    bucket_max = bucket_min + 1
+
+    # Calculate accuracy for this bracket
+    bracket_games = [
+        p
+        for p in past_bucket_confidences
+        if p["bucket_confidence"] >= bucket_min and p["bucket_confidence"] < bucket_max
+    ]
+
+    if bracket_games:
+        bracket_correct = sum(1 for p in bracket_games if p["correct"])
+        bracket_total = len(bracket_games)
+        bracket_accuracy = (bracket_correct / bracket_total) * 100
+
+        return weighted_acc, bracket_accuracy, bracket_total
+
+    return weighted_acc, None, 0
+
+
+def get_future_predictions(spread_line=False, bucket=False):
 
     conn = get_db_engine()
     model_artifacts = load_model("nfl-prediction.pkl")
@@ -193,6 +265,12 @@ def get_future_predictions(spread_line=False):
 
     # Run past predictions to update past data for confidence metrics
     get_past_predictions(season="all", spread_line=spread_line, quiet=True)
+
+    # Load bucket analysis if requested
+    bucket_df = None
+    if bucket:
+        print("Loading bucket analysis for confidence calculation...")
+        bucket_df = get_bucket_analysis("past_predictions")
 
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
@@ -224,7 +302,8 @@ def get_future_predictions(spread_line=False):
             home_away = "Away"
 
         confidence_acc, sample_size = confidence_accuracy(p["confidence_score"])
-        print(
+
+        output = (
             f"Pick: {p['predicted_winner']} ({home_away}) \t"
             f"Spread: {p['spread']} (Fav {p['spread_favorite']})\t"
             f"Cover by: {p['cover_spread_by']:.2f}\t"
@@ -232,8 +311,18 @@ def get_future_predictions(spread_line=False):
             f"Confidence: {p['confidence']}\t"
             f"Confidence Score: {p['confidence_score']:.2f} \t"
             f"Confidence Accuracy: {confidence_acc:.2f}% (Sample Size: {sample_size})\t"
-            f"{warning}"
         )
+
+        # Add bucket accuracy if requested
+        if bucket and bucket_df is not None:
+            bucket_conf, bucket_acc, bucket_sample = get_bucket_confidence_accuracy(
+                p, bucket_df
+            )
+            if bucket_acc is not None:
+                output += f"Bucket Accuracy: {bucket_acc:.1f}% (Bucket: {bucket_conf:.1f}%, n={bucket_sample})\t"
+
+        output += warning
+        print(output)
 
     df = pd.DataFrame(predictions)
     df.to_sql("future_predictions", conn, if_exists="replace", index=False)

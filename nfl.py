@@ -15,7 +15,7 @@ from src.config.random_search import run_random_search
 from src.config.optimize_confidence import run_optimization
 from src.data.data import backfil_data
 from src.data.update_spreads import update_current_spreads
-from src.data.qb_changes import get_qb_change
+from src.reports.qb_changes import get_qb_change
 from src.data.backup import backup_database
 from src.reports.nfl_past_prediction_report import (
     generate_past_prediction_report,
@@ -25,6 +25,9 @@ from src.reports.nfl_past_prediction_report import (
 from src.reports.compare_configs_report import generate_compare_configs_report
 from src.reports.nfl_power_ranking_report import generate_power_rankings_report
 from src.reports.nfl_future_prediction_report import generate_future_predictions_report
+from src.reports.past_predictions_analysis import print_bucket_analysis
+from src.reports.analyze_future_bucket_confidence import print_future_analysis
+from src.reports.analyze_past_bucket_confidence import print_past_bucket_analysis
 
 
 @click.group()
@@ -65,13 +68,6 @@ def refresh(backfill_date, backup, spreads):
         update_current_spreads()
     else:
         backfil_data(backfill_date)
-
-
-@data.command()
-def qb_change():
-    """Identify quarterback changes for the current week."""
-    print("Running: nfl data qb-change")
-    get_qb_change()
 
 
 @cli.group()
@@ -124,10 +120,15 @@ def past(year, report, spread_line):
     is_flag=True,
     help="Use the nflreadpy spread line for predictions instead of Yahoo spread.",
 )
-def future(report, spread_line):
+@click.option(
+    "--bucket",
+    is_flag=True,
+    help="Show bucket-based confidence accuracy for each prediction.",
+)
+def future(report, spread_line, bucket):
     """Generate predictions for future games."""
     print("Running: nfl model predict future")
-    get_future_predictions(spread_line)
+    get_future_predictions(spread_line, bucket)
     if report:
         df = load_data()
         save_accuracy_metrics_to_db(df)
@@ -261,6 +262,13 @@ def report():
 
 
 @report.command()
+def qb_change():
+    """Identify quarterback changes for the current week."""
+    print("Running: nfl data qb-change")
+    get_qb_change()
+
+
+@report.command()
 def past_predictions():
     """Generate predictions report."""
     df = load_data()
@@ -313,6 +321,31 @@ def compare_configs(log_file, top_n, output_file, spread_line):
 def power_rankings(season):
     """Generate power rankings report."""
     generate_power_rankings_report(season=season)
+
+
+@click.option(
+    "--future",
+    is_flag=True,
+    help="Show future predictions bucket confidence analysis.",
+)
+@click.option(
+    "--past",
+    is_flag=True,
+    help="Show past predictions bucket confidence analysis.",
+)
+@report.command()
+def bucket_analysis(future, past):
+    """Analyze past predictions performance by metric buckets."""
+    print("Running: nfl report bucket-analysis")
+    if future:
+        print("Future Predictions Bucket Confidence Analysis:")
+        print_future_analysis()
+    if past:
+        print("Past Predictions Bucket Confidence Analysis:")
+        print_past_bucket_analysis()
+
+    if not future and not past:
+        print_bucket_analysis()
 
 
 if __name__ == "__main__":
