@@ -293,6 +293,8 @@ def load_future_predictions():
         "div_game",
         "predicted_winner",
         "cover_spread_by",
+        "predicted_diff",
+        "confidence_score",
         "power_ranking_diff",
         "power_ranking_diff_l3",
         "win_pct_diff",
@@ -322,12 +324,17 @@ def load_future_predictions():
     # Only select columns that actually exist
     columns_to_select = [col for col in desired_columns if col in existing_columns]
 
-    # Build dynamic query
+    # Kickoff and Yahoo's row order let picks be listed like the Yahoo pick sheet.
     query = text(
         f"""
-        SELECT {', '.join(columns_to_select)}
-        FROM future_predictions
-        ORDER BY week, confidence DESC
+        SELECT {', '.join('fp.' + col for col in columns_to_select)},
+               g.gameday, g.gametime, g.weekday, ys.game_order
+        FROM future_predictions fp
+        LEFT JOIN games g ON fp.game_id = g.game_id
+        LEFT JOIN yahoo_spreads ys
+            ON ys.season = fp.season AND ys.week = fp.week
+            AND ys.home_team = fp.home_team AND ys.away_team = fp.away_team
+        ORDER BY fp.week, fp.confidence DESC
     """
     )
 
@@ -1000,6 +1007,158 @@ def get_accuracy_class(accuracy):
         return "accuracy-bad"
 
 
+PICKS_TABLE_SCRIPT = """
+<style>
+    #picksTable th { cursor: pointer; user-select: none; white-space: nowrap; }
+    #picksTable th:hover { background-color: #024a95; }
+    #picksTable th::after { content: ' \\2195'; opacity: .35; }
+    #picksTable th.sort-asc::after { content: ' \\25B2'; opacity: 1; }
+    #picksTable th.sort-desc::after { content: ' \\25BC'; opacity: 1; }
+</style>
+<script>
+(function () {
+    var table = document.getElementById('picksTable');
+    var tbody = table.tBodies[0];
+    var headers = table.querySelectorAll('th');
+    var sortedIndex = null;
+    var ascending = true;
+
+    function cellValue(cell, numeric) {
+        var raw = cell.dataset.value !== undefined ? cell.dataset.value : cell.textContent;
+        if (numeric) {
+            var parsed = parseFloat(raw);
+            return isNaN(parsed) ? -Infinity : parsed;
+        }
+        return raw.trim().toLowerCase();
+    }
+
+    headers.forEach(function (th, index) {
+        th.addEventListener('click', function () {
+            ascending = sortedIndex === index ? !ascending : true;
+            sortedIndex = index;
+            var numeric = th.dataset.sort === 'num';
+            var rows = Array.prototype.slice.call(tbody.rows);
+            rows.sort(function (a, b) {
+                var left = cellValue(a.cells[index], numeric);
+                var right = cellValue(b.cells[index], numeric);
+                if (left < right) return ascending ? -1 : 1;
+                if (left > right) return ascending ? 1 : -1;
+                return 0;
+            });
+            rows.forEach(function (row) { tbody.appendChild(row); });
+            headers.forEach(function (other) {
+                other.classList.remove('sort-asc', 'sort-desc');
+            });
+            th.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+        });
+    });
+
+    // Rows are already emitted in Yahoo order, so show that as the active sort.
+    sortedIndex = 0;
+    headers[0].classList.add('sort-asc');
+})();
+</script>
+"""
+
+
+def format_kickoff(prediction):
+    """Render kickoff the way the Yahoo pick sheet shows it, e.g. 'Sun 09/13 01:00 PM'."""
+    gameday = prediction.get("gameday")
+    gametime = prediction.get("gametime")
+    if not gameday:
+        return "—"
+    try:
+        stamp = datetime.strptime(f"{gameday} {gametime or '00:00'}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return str(gameday)
+    return stamp.strftime("%a %m/%d %I:%M %p")
+
+
+def build_picks_table(df):
+    """Summary table mirroring the `nfl model predict future` console output."""
+    from src.model.predict import confidence_accuracy
+
+    # Yahoo's own row order when we have it, otherwise fall back to kickoff.
+    picks = df.sort_values(
+        ["game_order", "gameday", "gametime", "game_id"], na_position="last"
+    )
+
+    rows = []
+    for _, p in picks.iterrows():
+        accuracy, sample_size = confidence_accuracy(p["confidence_score"])
+        if sample_size == 0:
+            # Sorts below any real accuracy rather than parsing as NaN.
+            accuracy_cell = '<td data-value="-1" class="accuracy-bad">no history</td>'
+        else:
+            accuracy_cell = (
+                f'<td data-value="{accuracy}" class="{get_accuracy_class(accuracy)}">'
+                f'{accuracy:.2f}% <span style="color:#666;font-weight:normal">'
+                f"(n={sample_size})</span></td>"
+            )
+
+        warnings = []
+        if p.get("home_qb_changed") == "Y":
+            warnings.append(f"⚠️ {p['home_team']} QB change")
+        if p.get("away_qb_changed") == "Y":
+            warnings.append(f"⚠️ {p['away_team']} QB change")
+
+        location = "Home" if p["predicted_winner"] == p["home_team"] else "Away"
+        # Trailing rank keeps games inside a shared kickoff in Yahoo's own order.
+        order = p.get("game_order")
+        rank = "" if pd.isna(order) else f"{int(order):03d}"
+        kickoff_sort = (
+            f"{p.get('gameday') or ''} {p.get('gametime') or ''} {rank}".strip()
+        )
+        rows.append(
+            f"""
+            <tr>
+                <td data-value="{kickoff_sort}">{format_kickoff(p)}</td>
+                <td data-value="{p['confidence']}">{p['confidence']}</td>
+                <td>{p['away_team']} @ {p['home_team']}</td>
+                <td><strong>{p['predicted_winner']}</strong> ({location})</td>
+                <td data-value="{p['spread']}">{p['spread']} <span style="color:#666">(Fav {p['spread_favorite']})</span></td>
+                <td data-value="{p['cover_spread_by']}">{p['cover_spread_by']:.2f}</td>
+                <td data-value="{p['predicted_diff']}">{p['predicted_diff']:.2f}</td>
+                <td data-value="{p['confidence_score']}">{p['confidence_score']:.2f}</td>
+                {accuracy_cell}
+                <td style="color:#856404">{' '.join(warnings)}</td>
+            </tr>"""
+        )
+
+    season = df["season"].iloc[0]
+    week = df["week"].iloc[0]
+    return f"""
+        <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px 0;">
+            <h2 style="margin-top: 0;">🏈 Model Picks - {season} Week {week}</h2>
+            <p style="color:#666; font-size:13px; margin-top:0;">
+                Listed in the same order as the Yahoo pick sheet. Click any column
+                to sort. A positive predicted diff means the home team is expected
+                to win.
+            </p>
+            <table id="picksTable">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Kickoff</th>
+                        <th data-sort="num">Confidence</th>
+                        <th data-sort="text">Matchup</th>
+                        <th data-sort="text">Pick</th>
+                        <th data-sort="num">Spread</th>
+                        <th data-sort="num">Cover By</th>
+                        <th data-sort="num">Predicted Diff</th>
+                        <th data-sort="num">Confidence Score</th>
+                        <th data-sort="num">Confidence Accuracy</th>
+                        <th data-sort="text">Warnings</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows)}
+                </tbody>
+            </table>
+        </div>
+        {PICKS_TABLE_SCRIPT}
+    """
+
+
 def get_filtered_metrics_info():
     """
     Get information about metric bucket filtering.
@@ -1383,6 +1542,8 @@ def generate_future_predictions_report(output_file="nfl_future_prediction_report
                 </div>
             </div>
         </div>
+        
+        {build_picks_table(df)}
         
         <div class="alert info">
             <strong>ℹ️ How to Read This Report:</strong><br>

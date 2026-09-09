@@ -1122,6 +1122,95 @@ def get_accuracy_class(accuracy):
         return "accuracy-medium"
 
 
+SEASON_ACCURACY_SCRIPT = """
+<script>
+(function () {
+    var picker = document.getElementById('seasonPicker');
+    var panels = document.querySelectorAll('.season-panel');
+
+    function show() {
+        panels.forEach(function (panel) {
+            panel.hidden = panel.dataset.season !== picker.value;
+        });
+    }
+
+    picker.addEventListener('change', show);
+    show();
+})();
+</script>
+"""
+
+
+def build_season_accuracy_table(df):
+    """Week-by-week accuracy per season, mirroring `nfl model predict past`."""
+    seasons = sorted(df["season"].unique(), reverse=True)
+
+    panels = []
+    for season in seasons:
+        season_df = df[df["season"] == season]
+        weekly = (
+            season_df.groupby("week")
+            .agg(correct=("correct", "sum"), total=("correct", "count"))
+            .reset_index()
+        )
+        weekly["accuracy"] = weekly["correct"] / weekly["total"] * 100
+
+        rows = "".join(
+            f"<tr><td>{int(row['week'])}</td>"
+            f"<td>{int(row['correct'])}/{int(row['total'])}</td>"
+            f"<td class='{get_accuracy_class(row['accuracy'])}'>{row['accuracy']:.2f}%</td>"
+            "</tr>"
+            for _, row in weekly.iterrows()
+        )
+
+        correct = int(season_df["correct"].sum())
+        total = len(season_df)
+        accuracy = correct / total * 100 if total else 0
+        above_50 = int((weekly["accuracy"] > 50).sum())
+
+        panels.append(
+            f"""
+            <div class="season-panel" data-season="{season}" hidden>
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <h3>Overall Accuracy</h3>
+                        <div class="value">{accuracy:.2f}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Record</h3>
+                        <div class="value">{correct}/{total}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Weeks Above 50%</h3>
+                        <div class="value">{above_50}/{len(weekly)}</div>
+                    </div>
+                </div>
+                <table>
+                    <tr><th>Week</th><th>Record</th><th>Accuracy</th></tr>
+                    {rows}
+                </table>
+            </div>"""
+        )
+
+    options = "".join(f'<option value="{s}">{s}</option>' for s in seasons)
+    return f"""
+        <div class="stat-box">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <h2 style="margin:0;">📅 Season Accuracy by Week</h2>
+                <select id="seasonPicker" style="padding:6px 10px; font-size:14px;">
+                    {options}
+                </select>
+            </div>
+            <p style="color:#666; font-size:13px;">
+                Same figures as <code>nfl model predict past --year &lt;season&gt;</code>.
+                Pushes are excluded.
+            </p>
+            {''.join(panels)}
+        </div>
+        {SEASON_ACCURACY_SCRIPT}
+    """
+
+
 def generate_past_prediction_report(df, output_file="nfl_past_prediction_report.html"):
     """Generate comprehensive HTML report."""
 
@@ -1309,6 +1398,8 @@ def generate_past_prediction_report(df, output_file="nfl_past_prediction_report.
                 <div class="value">{overall['accuracy']:.1f}%</div>
             </div>
         </div>
+        
+        {build_season_accuracy_table(df)}
         
         <h2>🚨 Key Insights for Future Betting</h2>
         <div class="section-grid">

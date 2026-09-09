@@ -1,14 +1,16 @@
 import nflreadpy as nfl
+import pandas as pd
 
 from src.data.yahoo_spreads import YahooSpreadClient
-from src.helpers.database_helpers import get_db_engine
+from src.helpers.database_helpers import add_missing_columns, get_db_engine
+from src.helpers.season_helpers import get_league_season, get_league_week
 import sqlalchemy
 
 
 def update_current_spreads():
     """Update current week spread data."""
-    current_week = nfl.get_current_week()
-    current_season = nfl.get_current_season()
+    current_week = get_league_week()
+    current_season = get_league_season()
 
     client = YahooSpreadClient()
     yahoo_spread_data = client.scrape_current_season_spread(current_week)
@@ -51,17 +53,19 @@ def update_current_spreads():
         conn.commit()
 
     # Update yahoo_spread data in yahoo_spreads table
+    add_missing_columns(engine, "yahoo_spreads", pd.DataFrame(yahoo_spread_data))
     with engine.connect() as conn:
         for row in yahoo_spread_data:
             conn.execute(
                 sqlalchemy.text(
-                    f"""UPDATE yahoo_spreads 
-                        SET yahoo_spread = {row['yahoo_spread']} 
-                        WHERE home_team = '{row['home_team']}' 
-                        AND away_team = '{row['away_team']}' 
-                        AND week = {current_week} 
-                        AND season = {current_season}"""
-                )
+                    """UPDATE yahoo_spreads 
+                        SET yahoo_spread = :yahoo_spread, game_order = :game_order
+                        WHERE home_team = :home_team 
+                        AND away_team = :away_team 
+                        AND week = :week 
+                        AND season = :season"""
+                ),
+                {**row, "week": current_week, "season": current_season},
             )
         conn.commit()
 

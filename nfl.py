@@ -36,6 +36,24 @@ def cli():
     pass
 
 
+@cli.command()
+@click.option(
+    "--port", type=int, default=8000, help="Port to serve on (default: 8000)."
+)
+@click.option(
+    "--host",
+    type=str,
+    default="127.0.0.1",
+    help="Interface to bind to (default: 127.0.0.1).",
+)
+def dashboard(port, host):
+    """Serve the report dashboard."""
+    from src.dashboard.app import serve
+
+    print(f"Dashboard running at http://{host}:{port}")
+    serve(host=host, port=port)
+
+
 @cli.group()
 def data():
     """Data management commands."""
@@ -314,8 +332,8 @@ def compare_configs(log_file, top_n, output_file, spread_line):
 @click.option(
     "--season",
     type=int,
-    default=2025,
-    help="Season year (default: 2025)",
+    default=None,
+    help="Season year (default: newest season with power ranking data)",
 )
 @report.command()
 def power_rankings(season):

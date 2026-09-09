@@ -6,7 +6,8 @@ from sqlalchemy import text
 import pandas as pd
 from pathlib import Path
 
-from src.helpers.database_helpers import get_db_engine
+from src.helpers.database_helpers import add_missing_columns, get_db_engine
+from src.helpers.season_helpers import get_league_season, get_league_week
 
 
 class YahooSpreadClient:
@@ -85,6 +86,13 @@ class YahooSpreadClient:
         else:
             combined_df = new_df.sort_values(["week", "home_team"])
 
+        # Don't add an empty column to seasons scraped before game_order existed.
+        if "game_order" in combined_df.columns:
+            if combined_df["game_order"].isna().all():
+                combined_df = combined_df.drop(columns=["game_order"])
+            else:
+                combined_df["game_order"] = combined_df["game_order"].astype("Int64")
+
         # Save to CSV
         combined_df.to_csv(filename, index=False)
         print(f"✓ Backed up {len(game_spreads)} spreads to {filename}")
@@ -154,21 +162,24 @@ class YahooSpreadClient:
             week INTEGER,
             season INTEGER,
             yahoo_spread REAL,
+            game_order INTEGER,
             PRIMARY KEY (home_team, away_team, week, season)
             )
         """
         insert_query = text(
             """
-            INSERT INTO yahoo_spreads (home_team, away_team, week, season, yahoo_spread)
-            VALUES (:home_team, :away_team, :week, :season, :yahoo_spread)
+            INSERT INTO yahoo_spreads (home_team, away_team, week, season, yahoo_spread, game_order)
+            VALUES (:home_team, :away_team, :week, :season, :yahoo_spread, :game_order)
             ON CONFLICT(home_team, away_team, week, season) 
-            DO UPDATE SET yahoo_spread = excluded.yahoo_spread
+            DO UPDATE SET yahoo_spread = excluded.yahoo_spread,
+                          game_order = COALESCE(excluded.game_order, yahoo_spreads.game_order)
         """
         )
 
         with engine.connect() as conn:
             conn.execute(text(create_table_query))
             conn.commit()
+            add_missing_columns(engine, "yahoo_spreads", pd.DataFrame(game_spreads))
 
             conn.execute(insert_query, game_spreads)
             conn.commit()
@@ -190,9 +201,9 @@ class YahooSpreadClient:
             )
 
         # Now scrape website for current season (accumulate without saving)
-        print(f"Scraping website for current season spreads...")
-        current_season = nfl.get_current_season()
-        current_week = nfl.get_current_week()
+        current_season = get_league_season()
+        current_week = get_league_week()
+        print(f"Scraping website for {current_season} season spreads...")
         website_spreads = []
 
         for week in range(1, current_week + 1):
@@ -201,20 +212,25 @@ class YahooSpreadClient:
 
         # Convert website data to DataFrame
         if website_spreads:
-            website_df = pd.DataFrame(website_spreads)
-
-            # Remove current season data from CSV (will be replaced by website data)
-            csv_df = csv_df[csv_df["season"] != current_season]
-
             # Combine: CSV historical data + website current season data
+            website_df = pd.DataFrame(website_spreads)
             combined_df = pd.concat([csv_df, website_df], ignore_index=True)
         else:
             # No website data, use CSV only
             combined_df = csv_df
 
-        # Remove any duplicates (shouldn't be any, but just in case)
+        # Website rows are concatenated last, so they win over stale CSV rows
         combined_df = combined_df.drop_duplicates(
             subset=["home_team", "away_team", "week", "season"], keep="last"
+        )
+
+        # CSVs written before game_order existed leave gaps; keep them as NULL.
+        if "game_order" not in combined_df.columns:
+            combined_df["game_order"] = None
+        combined_df["game_order"] = (
+            combined_df["game_order"]
+            .astype(object)
+            .where(combined_df["game_order"].notna(), None)
         )
 
         # Convert back to list of dicts
@@ -239,6 +255,7 @@ class YahooSpreadClient:
     def scrape_current_season_spread(self, week):
         """Scrape current seasons spreads for a specific week from Yahoo website."""
 
+        season = get_league_season()
         url = f"{self.base_url}?gid=&week={week}&type=s"
         resp = requests.get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -294,8 +311,10 @@ class YahooSpreadClient:
                     "home_team": home_abbr,
                     "away_team": away_abbr,
                     "week": week,
-                    "season": nfl.get_current_season(),
+                    "season": season,
                     "yahoo_spread": spread,
+                    # Row position on Yahoo's pick page, so reports can match it.
+                    "game_order": len(games),
                 }
             )
 

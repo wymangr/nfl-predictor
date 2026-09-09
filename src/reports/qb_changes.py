@@ -1,6 +1,8 @@
 import nflreadpy as nfl
 import pandas as pd
 
+from src.helpers.season_helpers import get_league_season, get_league_week
+
 
 # Function to find the most recent previous QB for a team
 def get_previous_qb(team, current_week, schedule_df):
@@ -26,7 +28,7 @@ def get_previous_qb(team, current_week, schedule_df):
 def get_qb_change():
     """Identify quarterback changes for the current week."""
     # Load the schedule data
-    current_season = nfl.get_current_season()
+    current_season = get_league_season()
     schedule_df = nfl.load_schedules(seasons=current_season).to_pandas()
 
     # Filter for regular season games only (except current season)
@@ -35,7 +37,7 @@ def get_qb_change():
     ].copy()
 
     # Set the current week
-    current_week = nfl.get_current_week()
+    current_week = get_league_week()
 
     # Get current week games - unpivot to get each team with their QB
     current_week_home = schedule_df[schedule_df["week"] == current_week][

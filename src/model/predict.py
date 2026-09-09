@@ -260,8 +260,19 @@ def get_future_predictions(spread_line=False, bucket=False):
 
     conn = get_db_engine()
     model_artifacts = load_model("nfl-prediction.pkl")
-    week = nfl.get_current_week()
-    season = nfl.get_current_season()
+
+    # Target the earliest unplayed week that has spreads rather than trusting
+    # nflreadpy's current week, which lags into the start of a new season.
+    next_week = run_query(
+        "SELECT season, week FROM training_data"
+        " WHERE (away_score IS NULL OR home_score IS NULL) AND yahoo_spread IS NOT NULL"
+        " ORDER BY season ASC, week ASC LIMIT 1"
+    )
+    if not next_week:
+        print("No future games to predict.")
+        return
+    season = next_week[0]["season"]
+    week = next_week[0]["week"]
 
     # Run past predictions to update past data for confidence metrics
     get_past_predictions(season="all", spread_line=spread_line, quiet=True)
@@ -470,13 +481,12 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
 
 def get_past_predictions_model(model, spread_line=False):
     """Get week-by-week 2025 results with consistency metrics."""
-    current_week = nfl.get_current_week()
-
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
 
+    # 2025 is the holdout season; the score check already limits this to played games.
     game_to_predict = run_query(
-        f"SELECT * FROM training_data td where td.season == 2025 and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) order by week asc"
+        "SELECT * FROM training_data td where td.season == 2025 AND (away_score IS NOT NULL OR home_score IS NOT NULL) order by week asc"
     )
     games_df = pd.DataFrame(game_to_predict)
 

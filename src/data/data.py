@@ -4,7 +4,8 @@ import nflreadpy as nfl
 import pandas as pd
 from sqlalchemy import text
 
-from src.helpers.database_helpers import get_db_engine
+from src.helpers.database_helpers import add_missing_columns, get_db_engine
+from src.helpers.season_helpers import get_league_season
 from src.data.yahoo_spreads import YahooSpreadClient
 
 
@@ -54,17 +55,14 @@ def get_sos(seasons=None):
         season_filter = ""
 
     current_season = nfl.get_current_season()
-    current_week = nfl.get_current_week()
 
     games_df = pd.read_sql_query(
         text(
             f"""
             SELECT * FROM games
-            WHERE (
-                (season != {current_season} {season_filter})
-                OR (season = {current_season} AND week <= {current_week})
-            )
-            AND ((season != {current_season} and game_type = 'REG') OR (season = {current_season}))
+            WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+            {season_filter}
+            AND (game_type = 'REG' OR season = {current_season})
             """
         ),
         engine,
@@ -639,14 +637,33 @@ def merge_most_recent_lookup(
     return pd.DataFrame(result_rows)
 
 
+def _load_team_stats(seasons: list[int]):
+    """nflverse only publishes a season's team stats once its games start."""
+    try:
+        return nfl.load_team_stats(seasons=seasons, summary_level="week")
+    except Exception:
+        if len(seasons) < 2:
+            raise
+        print(
+            f"⚠️  nflverse has no team stats for {seasons[-1]} yet - "
+            f"loading through {seasons[-2]}"
+        )
+        return nfl.load_team_stats(seasons=seasons[:-1], summary_level="week")
+
+
 def backfil_data(backfil_season: int = 2003):
-    current_year = nfl.get_current_season()
-    seasons = list(range(backfil_season, current_year + 1))
+    league_year = get_league_season()
+    schedule_seasons = list(range(backfil_season, league_year + 1))
     YahooSpreadClient().get_all_week_spreads()
 
     # Load team stats
-    team_stats = nfl.load_team_stats(seasons=seasons, summary_level="week")
+    team_stats = _load_team_stats(
+        list(range(backfil_season, nfl.get_current_season() + 1))
+    )
     team_stats_df = team_stats.to_pandas()
+    # Schedules run ahead of stats, so the stats seasons are whatever loaded.
+    current_year = int(team_stats_df["season"].max())
+    seasons = list(range(backfil_season, current_year + 1))
     team_stats_df = team_stats_df[
         (team_stats_df["season_type"] == "REG")
         | (team_stats_df["season"] == current_year)
@@ -760,7 +777,7 @@ def backfil_data(backfil_season: int = 2003):
     team_stats_accumulated = df_subset_reindexed
 
     # Get game data
-    games = nfl.load_schedules(seasons=seasons)
+    games = nfl.load_schedules(seasons=schedule_seasons)
     games_df = games.to_pandas()
     games_df = games_df[
         (games_df["game_type"] == "REG") | (games_df["season"] == current_year)
@@ -780,6 +797,7 @@ def backfil_data(backfil_season: int = 2003):
     print("Saving team stats and games to database...")
     engine = get_db_engine()
     seasons_str = ",".join(map(str, seasons))
+    schedule_seasons_str = ",".join(map(str, schedule_seasons))
 
     # Handle team_stats_accumulated table with schema migration check
     with engine.connect() as conn:
@@ -840,11 +858,16 @@ def backfil_data(backfil_season: int = 2003):
         pass
     try:
         with engine.connect() as conn:
-            conn.execute(text(f"DELETE FROM games WHERE season IN ({seasons_str})"))
+            conn.execute(
+                text(f"DELETE FROM games WHERE season IN ({schedule_seasons_str})")
+            )
             conn.commit()
     except Exception:
         # Table doesn't exist yet
         pass
+
+    add_missing_columns(engine, "team_stats", team_stats_df)
+    add_missing_columns(engine, "games", games_df)
 
     team_stats_df.to_sql("team_stats", engine, if_exists="append", index=False)
     games_df.to_sql("games", engine, if_exists="append", index=False)
@@ -1740,7 +1763,7 @@ def backfil_data(backfil_season: int = 2003):
     # This preserves historical data while updating only the specified seasons
 
     # Get the seasons being updated
-    seasons_to_update = seasons  # This is the list of seasons passed to backfil_data
+    seasons_to_update = schedule_seasons
     seasons_str = ",".join(map(str, seasons_to_update))
 
     # Check if training_data table exists and has the correct schema

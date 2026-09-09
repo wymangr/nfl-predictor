@@ -1,26 +1,32 @@
 import json
 from datetime import datetime
-import nflreadpy as nfl
 
 from src.helpers.database_helpers import run_query
 
 
-def generate_power_rankings_report(season=2025):
+def generate_power_rankings_report(season=None):
     """
     Generate an interactive HTML report for NFL team power rankings.
 
     Args:
-        season: Season year to generate report for (default: 2025)
+        season: Season year to generate report for (default: newest season with data)
     """
-    # Get all data for the season
-    current_week = nfl.get_current_week()
+    if season is None:
+        rows = run_query("SELECT MAX(season) AS season FROM team_power_rankings")
+        season = rows[0]["season"] if rows else None
+
+    # team_power_rankings only holds weeks with completed games, so no week bound.
     query = f"""
     SELECT * FROM team_power_rankings 
     WHERE season = {season} 
-    AND week <= {current_week}
     ORDER BY week, power_ranking DESC
     """
     all_data = run_query(query)
+
+    if not all_data:
+        raise ValueError(
+            f"No power ranking data for season {season}. Run `nfl data refresh` first."
+        )
 
     # Get current week data (latest week)
     max_week = max(row["week"] for row in all_data)
