@@ -9,6 +9,8 @@ import sqlalchemy
 
 def update_current_spreads():
     """Update current week spread data."""
+    # See backfil_data: avoid refreshing from nflreadpy's in-process cache.
+    nfl.clear_cache()
     current_week = get_league_week()
     current_season = get_league_season()
 

@@ -7,7 +7,13 @@ import traceback
 
 from flask import Flask, abort, jsonify, render_template, request
 
-from src.dashboard.reports import REPORTS, ReportNotBuilt, available_seasons, render
+from src.dashboard.reports import (
+    REPORTS,
+    ReportNotBuilt,
+    available_seasons,
+    available_weeks,
+    render,
+)
 from src.data.data import backfil_data
 from src.data.update_spreads import update_current_spreads
 from src.model.train import train_model
@@ -36,10 +42,12 @@ def _error_page(title: str, detail: str) -> str:
 
 @app.get("/")
 def index():
+    seasons = available_seasons()
     return render_template(
         "index.html",
         reports=list(REPORTS.values()),
-        seasons=available_seasons(),
+        seasons=seasons,
+        weeks=available_weeks(seasons[0]) if seasons else [],
     )
 
 
@@ -60,10 +68,17 @@ def report(key: str):
         if season not in seasons:
             season = seasons[0]
 
+    week = None
+    if entry.weeks_param and season is not None:
+        weeks = available_weeks(season)
+        week = request.args.get("week", type=int)
+        if week not in weeks:
+            week = weeks[0] if weeks else None
+
     force = request.args.get("force") == "1"
 
     try:
-        body = render(entry, season=season, force=force)
+        body = render(entry, season=season, week=week, force=force)
     except ReportNotBuilt:
         return _error_page(
             "Not generated yet",
@@ -87,6 +102,14 @@ def report(key: str):
 @app.get("/api/seasons")
 def seasons():
     return jsonify(available_seasons())
+
+
+@app.get("/api/weeks")
+def weeks():
+    season = request.args.get("season", type=int)
+    if season is None:
+        return jsonify([])
+    return jsonify(available_weeks(season))
 
 
 @app.post("/api/run/<task>")

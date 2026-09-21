@@ -44,7 +44,7 @@ def run_feature_selection(spread_line=False):
     # Load data
     print("Loading data...")
     training_data = run_query(
-        "SELECT * FROM training_data WHERE season <= 2025 ORDER BY season ASC, week ASC"
+        "SELECT * FROM training_data WHERE season <= 2025 AND (game_type = 'REG' OR season = 2025) ORDER BY season ASC, week ASC"
     )
     df = pd.DataFrame(training_data)
     df["point_differential"] = df["home_score"] - df["away_score"]

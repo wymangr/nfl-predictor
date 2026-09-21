@@ -54,15 +54,15 @@ def get_sos(seasons=None):
     else:
         season_filter = ""
 
-    current_season = nfl.get_current_season()
-
+    # Postseason games are predicted but never feed features, so power rankings
+    # are built from regular season results only.
     games_df = pd.read_sql_query(
         text(
             f"""
             SELECT * FROM games
             WHERE home_score IS NOT NULL AND away_score IS NOT NULL
             {season_filter}
-            AND (game_type = 'REG' OR season = {current_season})
+            AND game_type = 'REG'
             """
         ),
         engine,
@@ -311,6 +311,14 @@ def get_sos(seasons=None):
         games_df.groupby("season")["week"].apply(lambda x: sorted(x.unique())).to_dict()
     )
 
+    # Also build the week about to be played, so rankings exist going into it.
+    # SOS for week N only reads games from weeks < N, so this is the same value a
+    # later refresh would produce - it just becomes available a week earlier.
+    completed_weeks = {
+        season: weeks + [max(weeks) + 1] if weeks else weeks
+        for season, weeks in completed_weeks.items()
+    }
+
     # Recreate all_games with opponent info for SOS calculation
     home_games = games_df[["season", "week", "home_team", "away_team"]].copy()
     home_games["team"] = home_games["home_team"]
@@ -540,7 +548,14 @@ def get_previous_week_key(row, team_stats_accumulated):
     current_week = row["week"]
 
     if current_week > 1:
-        return current_season, current_week - 1
+        # Postseason weeks have no accumulated stats of their own, so they fall
+        # back to the last regular season week.
+        season_weeks = team_stats_accumulated[
+            team_stats_accumulated["season"] == current_season
+        ]["week"]
+        if season_weeks.empty:
+            return None, None
+        return current_season, min(current_week - 1, int(season_weeks.max()))
     else:
         # Find the max week in the *previous* season
         previous_season = current_season - 1
@@ -652,6 +667,9 @@ def _load_team_stats(seasons: list[int]):
 
 
 def backfil_data(backfil_season: int = 2003):
+    # nflreadpy memoises downloads for 24h, so a long-lived caller (the dashboard)
+    # would otherwise refresh from a stale in-process copy.
+    nfl.clear_cache()
     league_year = get_league_season()
     schedule_seasons = list(range(backfil_season, league_year + 1))
     YahooSpreadClient().get_all_week_spreads()
@@ -664,10 +682,10 @@ def backfil_data(backfil_season: int = 2003):
     # Schedules run ahead of stats, so the stats seasons are whatever loaded.
     current_year = int(team_stats_df["season"].max())
     seasons = list(range(backfil_season, current_year + 1))
-    team_stats_df = team_stats_df[
-        (team_stats_df["season_type"] == "REG")
-        | (team_stats_df["season"] == current_year)
-    ].copy()
+    # Features are built from regular season play only, in every season. Postseason
+    # games still get predicted, but using the regular season stats that the model
+    # was trained on.
+    team_stats_df = team_stats_df[team_stats_df["season_type"] == "REG"].copy()
 
     # Define desired stats - only use columns that actually exist in the data
     # Basic offense stats that have defensive equivalents
@@ -779,9 +797,10 @@ def backfil_data(backfil_season: int = 2003):
     # Get game data
     games = nfl.load_schedules(seasons=schedule_seasons)
     games_df = games.to_pandas()
-    games_df = games_df[
-        (games_df["game_type"] == "REG") | (games_df["season"] == current_year)
-    ].copy()
+    # Postseason games are kept so they get predicted and graded like any other.
+    # Every game-derived feature below reads games_reg_df instead, so postseason
+    # results never leak into a later week's or a later season's prediction.
+    games_reg_df = games_df[games_df["game_type"] == "REG"]
 
     yahoo_spreads_df = pd.read_sql_table("yahoo_spreads", get_db_engine())
     games_df = pd.merge(
@@ -1170,7 +1189,7 @@ def backfil_data(backfil_season: int = 2003):
     # First, calculate cumulative points and games for each team
     # IMPORTANT: Only use COMPLETED games (with scores) to avoid data leakage
     # When incomplete games get scores, they shouldn't change historical averages
-    games_for_avg = games_df[
+    games_for_avg = games_reg_df[
         ["season", "week", "home_team", "away_team", "home_score", "away_score"]
     ].copy()
     games_for_avg = games_for_avg.dropna(subset=["home_score", "away_score"])
@@ -1305,7 +1324,7 @@ def backfil_data(backfil_season: int = 2003):
     # For each team-season-week, get the actual games played count
     # We need to calculate this from actual games, not from all_points which only has played weeks
     # Create a complete games_played for all weeks (including bye weeks)
-    games_for_count = games_df[["season", "week", "home_team", "away_team"]].copy()
+    games_for_count = games_reg_df[["season", "week", "home_team", "away_team"]].copy()
 
     home_games_count = games_for_count[["season", "week", "home_team"]].copy()
     home_games_count.columns = ["season", "week", "team"]
@@ -1407,7 +1426,7 @@ def backfil_data(backfil_season: int = 2003):
     print("Calculating spread performance differential...")
 
     # Step 1 & 2: Calculate actual point differential and spread differential for all games
-    games_spread_perf = games_df[
+    games_spread_perf = games_reg_df[
         [
             "season",
             "week",
@@ -1561,7 +1580,7 @@ def backfil_data(backfil_season: int = 2003):
     print("Calculating average margin of victory differential...")
 
     # Calculate margin from each team's perspective (their score - opponent score)
-    games_margin = games_df[
+    games_margin = games_reg_df[
         ["season", "week", "home_team", "away_team", "home_score", "away_score"]
     ].copy()
     games_margin = games_margin.dropna(subset=["home_score", "away_score"])

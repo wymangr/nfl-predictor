@@ -17,6 +17,7 @@ from src.data.data import backfil_data
 from src.data.update_spreads import update_current_spreads
 from src.reports.qb_changes import get_qb_change
 from src.data.backup import backup_database
+from src.helpers.season_helpers import get_league_season
 from src.reports.nfl_past_prediction_report import (
     generate_past_prediction_report,
     load_data,
@@ -104,8 +105,8 @@ def predict():
 @click.option(
     "--year",
     type=str,
-    default="2025",
-    help="Year(s) to generate predictions for. Can be a single year (2025), multiple years (2024,2025), or 'all' (default: 2025).",
+    default=None,
+    help="Year(s) to generate predictions for. Can be a single year (2025), multiple years (2024,2025), or 'all' (default: current season).",
 )
 @click.option(
     "--report",
@@ -120,7 +121,7 @@ def predict():
 def past(year, report, spread_line):
     """Generate predictions for past games."""
     print("Running: nfl model predict past")
-    get_past_predictions(year, spread_line)
+    get_past_predictions(year or get_league_season(), spread_line)
     if report:
         df = load_data()
         generate_past_prediction_report(df)
@@ -335,10 +336,16 @@ def compare_configs(log_file, top_n, output_file, spread_line):
     default=None,
     help="Season year (default: newest season with power ranking data)",
 )
+@click.option(
+    "--week",
+    type=int,
+    default=None,
+    help="Week to show (default: newest week with rankings)",
+)
 @report.command()
-def power_rankings(season):
+def power_rankings(season, week):
     """Generate power rankings report."""
-    generate_power_rankings_report(season=season)
+    generate_power_rankings_report(season=season, week=week)
 
 
 @click.option(

@@ -3,7 +3,10 @@ from datetime import datetime
 from sqlalchemy import text
 
 from src.helpers.database_helpers import get_db_engine
-from src.reports.nfl_past_prediction_report import lookup_accuracy_metric
+from src.reports.nfl_past_prediction_report import (
+    lookup_accuracy_metric,
+    spread_line_cell,
+)
 
 
 def calculate_metric_reliability(model_baseline=62.9):
@@ -328,7 +331,7 @@ def load_future_predictions():
     query = text(
         f"""
         SELECT {', '.join('fp.' + col for col in columns_to_select)},
-               g.gameday, g.gametime, g.weekday, ys.game_order
+               g.gameday, g.gametime, g.weekday, g.spread_line, ys.game_order
         FROM future_predictions fp
         LEFT JOIN games g ON fp.game_id = g.game_id
         LEFT JOIN yahoo_spreads ys
@@ -1077,6 +1080,9 @@ def format_kickoff(prediction):
 def build_picks_table(df):
     """Summary table mirroring the `nfl model predict future` console output."""
     from src.model.predict import confidence_accuracy
+    from src.reports.spread_analysis_report import delta_bucket_cell, delta_bucket_stats
+
+    bucket_baseline, bucket_stats = delta_bucket_stats()
 
     # Yahoo's own row order when we have it, otherwise fall back to kickoff.
     picks = df.sort_values(
@@ -1117,6 +1123,8 @@ def build_picks_table(df):
                 <td>{p['away_team']} @ {p['home_team']}</td>
                 <td><strong>{p['predicted_winner']}</strong> ({location})</td>
                 <td data-value="{p['spread']}">{p['spread']} <span style="color:#666">(Fav {p['spread_favorite']})</span></td>
+                {spread_line_cell(p)}
+                {delta_bucket_cell(p, bucket_baseline, bucket_stats)}
                 <td data-value="{p['cover_spread_by']}">{p['cover_spread_by']:.2f}</td>
                 <td data-value="{p['predicted_diff']}">{p['predicted_diff']:.2f}</td>
                 <td data-value="{p['confidence_score']}">{p['confidence_score']:.2f}</td>
@@ -1143,6 +1151,8 @@ def build_picks_table(df):
                         <th data-sort="text">Matchup</th>
                         <th data-sort="text">Pick</th>
                         <th data-sort="num">Spread</th>
+                        <th data-sort="num">Spread Line</th>
+                        <th data-sort="num">Line Bucket</th>
                         <th data-sort="num">Cover By</th>
                         <th data-sort="num">Predicted Diff</th>
                         <th data-sort="num">Confidence Score</th>
@@ -2688,9 +2698,11 @@ def generate_future_predictions_report(output_file="nfl_future_prediction_report
     ]
 
     for col in rank_cols:
-        # Extract numeric values, set '-' as NaN
-        vals = (
-            rank_df[col].replace("-", float("nan")).str.replace("%", "").astype(float)
+        # A threshold column is all "-" when it filters out every game, which leaves
+        # no strings for the .str accessor - coerce instead of replacing first.
+        vals = pd.to_numeric(
+            rank_df[col].astype(str).str.replace("%", "", regex=False),
+            errors="coerce",
         )
         # Rank: lowest=1, highest=N, ties get min rank
         ranks = vals.rank(method="min")

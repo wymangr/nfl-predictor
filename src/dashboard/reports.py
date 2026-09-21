@@ -18,9 +18,13 @@ from src.reports.nfl_past_prediction_report import (
     load_data,
     save_accuracy_metrics_to_db,
 )
-from src.reports.nfl_power_ranking_report import generate_power_rankings_report
+from src.reports.nfl_power_ranking_report import (
+    generate_power_rankings_report,
+    ranked_weeks_for,
+)
 from src.reports.past_predictions_analysis import print_bucket_analysis
 from src.reports.qb_changes import get_qb_change
+from src.reports.spread_analysis_report import generate_spread_analysis_report
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class Report:
     # Slow reports serve their last generated file and only rebuild on request.
     cached: bool = False
     seasons_param: bool = False
+    weeks_param: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock, compare=False)
 
 
@@ -74,13 +79,24 @@ REPORTS: dict[str, Report] = {
             output_file=lambda **_: Path("nfl_past_prediction_report.html"),
         ),
         Report(
+            key="spread-analysis",
+            label="Spread Analysis",
+            description="Model accuracy sliced by spread size, market line, and their disagreement.",
+            kind="html",
+            generate=generate_spread_analysis_report,
+            output_file=lambda **_: Path("nfl_spread_analysis_report.html"),
+        ),
+        Report(
             key="power-rankings",
             label="Power Rankings",
             description="Weekly power rankings, strength of schedule, and adjusted ranks.",
             kind="html",
-            generate=lambda season: generate_power_rankings_report(season=season),
+            generate=lambda season, week: generate_power_rankings_report(
+                season=season, week=week
+            ),
             output_file=lambda season, **_: Path(f"nfl_power_rankings_{season}.html"),
             seasons_param=True,
+            weeks_param=True,
         ),
         Report(
             key="compare-configs",
@@ -140,13 +156,27 @@ def available_seasons() -> list[int]:
     return [row["season"] for row in rows]
 
 
+def available_weeks(season: int) -> list[int]:
+    """Weeks with real rankings for a season, newest first."""
+    return sorted(ranked_weeks_for(season), reverse=True)
+
+
 class ReportNotBuilt(Exception):
     """A cached report has never been generated."""
 
 
-def render(report: Report, season: int | None = None, force: bool = False) -> str:
+def render(
+    report: Report,
+    season: int | None = None,
+    week: int | None = None,
+    force: bool = False,
+) -> str:
     """Produce the report body, regenerating it unless a cached copy will do."""
-    kwargs = {"season": season} if report.seasons_param else {}
+    kwargs = {}
+    if report.seasons_param:
+        kwargs["season"] = season
+    if report.weeks_param:
+        kwargs["week"] = week
 
     if report.kind == "text":
         with report.lock:

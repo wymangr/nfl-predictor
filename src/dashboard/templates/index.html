@@ -119,6 +119,11 @@
       <option value="{{ season }}">{{ season }}</option>
       {% endfor %}
     </select>
+    <select id="week" hidden>
+      {% for week in weeks %}
+      <option value="{{ week }}">Week {{ week }}</option>
+      {% endfor %}
+    </select>
     <button id="refresh" disabled>Regenerate</button>
     <span class="divider"></span>
     <button id="refreshSpreads" title="nfl data refresh --spreads">Refresh Spreads</button>
@@ -135,15 +140,25 @@
   const title = document.getElementById('title');
   const status = document.getElementById('status');
   const seasonSelect = document.getElementById('season');
+  const weekSelect = document.getElementById('week');
   const refresh = document.getElementById('refresh');
   let current = null;
 
   function url(force) {
     const params = new URLSearchParams();
-    if (current.seasons) params.set('season', seasonSelect.value);
+    if (current.seasons) {
+      params.set('season', seasonSelect.value);
+      if (weekSelect.value) params.set('week', weekSelect.value);
+    }
     if (force) params.set('force', '1');
     params.set('t', Date.now());
     return `/report/${current.key}?${params}`;
+  }
+
+  async function loadWeeks() {
+    const res = await fetch(`/api/weeks?season=${seasonSelect.value}`);
+    const weeks = await res.json();
+    weekSelect.innerHTML = weeks.map((w) => `<option value="${w}">Week ${w}</option>`).join('');
   }
 
   function load(force) {
@@ -171,11 +186,16 @@
       };
       title.textContent = btn.dataset.label;
       seasonSelect.hidden = !current.seasons;
+      weekSelect.hidden = !current.seasons;
       load(false);
     });
   });
 
-  seasonSelect.addEventListener('change', () => load(false));
+  seasonSelect.addEventListener('change', async () => {
+    await loadWeeks();
+    load(false);
+  });
+  weekSelect.addEventListener('change', () => load(false));
   refresh.addEventListener('click', () => load(true));
 
   const refreshSpreads = document.getElementById('refreshSpreads');

@@ -24,6 +24,9 @@ def load_data():
         g.away_qb_name,
         g.home_qb_name,
         g.total_line,
+        g.spread_line,
+        g.away_score,
+        g.home_score,
         g.away_score + g.home_score as total_score
     FROM past_predictions pp
     LEFT JOIN games g ON pp.game_id = g.game_id
@@ -1122,6 +1125,244 @@ def get_accuracy_class(accuracy):
         return "accuracy-medium"
 
 
+RESULTS_WEEK_SCRIPT = """
+<style>
+    .results-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+    .results-table th:hover { background-color: #024a95; }
+    .results-table th::after { content: ' \\2195'; opacity: .35; }
+    .results-table th.sort-asc::after { content: ' \\25B2'; opacity: 1; }
+    .results-table th.sort-desc::after { content: ' \\25BC'; opacity: 1; }
+</style>
+<script>
+(function () {
+    var picker = document.getElementById('resultsWeekPicker');
+    var panels = document.querySelectorAll('.results-panel');
+
+    function cellValue(cell, numeric) {
+        var raw = cell.dataset.value !== undefined ? cell.dataset.value : cell.textContent;
+        if (numeric) {
+            var parsed = parseFloat(raw);
+            return isNaN(parsed) ? -Infinity : parsed;
+        }
+        return raw.trim().toLowerCase();
+    }
+
+    document.querySelectorAll('.results-table').forEach(function (table) {
+        var tbody = table.tBodies[0];
+        var headers = table.querySelectorAll('th');
+        var sortedIndex = null;
+        var ascending = true;
+
+        headers.forEach(function (th, index) {
+            th.addEventListener('click', function () {
+                ascending = sortedIndex === index ? !ascending : true;
+                sortedIndex = index;
+                var numeric = th.dataset.sort === 'num';
+                var rows = Array.prototype.slice.call(tbody.rows);
+                rows.sort(function (a, b) {
+                    var left = cellValue(a.cells[index], numeric);
+                    var right = cellValue(b.cells[index], numeric);
+                    if (left < right) return ascending ? -1 : 1;
+                    if (left > right) return ascending ? 1 : -1;
+                    return 0;
+                });
+                rows.forEach(function (row) { tbody.appendChild(row); });
+                headers.forEach(function (other) {
+                    other.classList.remove('sort-asc', 'sort-desc');
+                });
+                th.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+            });
+        });
+    });
+
+    function show() {
+        panels.forEach(function (panel) {
+            panel.hidden = panel.dataset.key !== picker.value;
+        });
+    }
+
+    picker.addEventListener('change', show);
+    show();
+})();
+</script>
+"""
+
+
+def actual_cover_margin(prediction):
+    """Points by which the picked team beat the spread (negative = missed it)."""
+    spread = abs(prediction["spread"])
+    signed = (
+        -spread if prediction["spread_favorite"] == prediction["home_team"] else spread
+    )
+    home_cover = (prediction["home_score"] - prediction["away_score"]) + signed
+    if prediction["predicted_winner"] == prediction["home_team"]:
+        return home_cover
+    return -home_cover
+
+
+def yahoo_signed_spread(prediction):
+    """The stored spread as a signed number: negative when the home team is favored."""
+    spread = abs(prediction["spread"])
+    if prediction["spread_favorite"] == prediction["home_team"]:
+        return -spread
+    return spread
+
+
+def spread_line_cell(prediction):
+    """nflverse spread line, shown in Yahoo's sign convention and flagged if it differs."""
+    line = prediction.get("spread_line")
+    if line is None or pd.isna(line):
+        return '<td data-value="">—</td>'
+
+    # nflverse is positive when the home team is favored; Yahoo is negative.
+    line = -line
+    favorite = prediction["home_team"] if line < 0 else prediction["away_team"]
+
+    gap = abs(line - yahoo_signed_spread(prediction))
+    if gap == 0:
+        style = ""
+    else:
+        if gap <= 1:
+            colors = "background-color:#fff3cd;color:#856404"
+        elif gap <= 2:
+            colors = "background-color:#ffe0b2;color:#8a4b08"
+        else:
+            colors = "background-color:#f8d7da;color:#721c24"
+        style = (
+            f' style="{colors};font-weight:bold"'
+            f' title="Off the Yahoo spread by {gap:g}"'
+        )
+
+    return (
+        f'<td data-value="{line}"{style}>{abs(line):g} '
+        f'<span style="color:#666;font-weight:normal">(Fav {favorite})</span></td>'
+    )
+
+
+def build_recent_results_table(df):
+    """Graded picks, one panel per completed week, newest first."""
+    from src.model.predict import confidence_accuracy
+    from src.reports.spread_analysis_report import delta_bucket_cell, delta_bucket_stats
+
+    bucket_baseline, bucket_stats = delta_bucket_stats()
+
+    graded = df[df["home_score"].notna() & df["away_score"].notna()]
+    weeks = sorted(
+        graded[["season", "week"]].drop_duplicates().itertuples(index=False),
+        key=lambda w: (w.season, w.week),
+        reverse=True,
+    )
+
+    panels = []
+    options = []
+    for season, week in weeks:
+        key = f"{season}-{week}"
+        options.append(f'<option value="{key}">{season} Week {week}</option>')
+        entries = graded[
+            (graded["season"] == season) & (graded["week"] == week)
+        ].sort_values("confidence", ascending=False)
+
+        rows = []
+        for _, p in entries.iterrows():
+            hit = bool(p["correct"])
+            location = "Home" if p["predicted_winner"] == p["home_team"] else "Away"
+            actual = actual_cover_margin(p)
+            miss = p["cover_spread_by"] - actual
+
+            accuracy, sample_size = confidence_accuracy(p["confidence_score"])
+            if sample_size == 0:
+                accuracy_cell = '<td class="accuracy-bad" data-value="">no history</td>'
+            else:
+                accuracy_cell = (
+                    f'<td class="{get_accuracy_class(accuracy)}" data-value="{accuracy}">'
+                    f'{accuracy:.2f}% <span style="color:#666;font-weight:normal">'
+                    f"(n={sample_size})</span></td>"
+                )
+
+            rows.append(
+                f"""
+                <tr>
+                    <td>{p['away_team']} @ {p['home_team']}</td>
+                    <td data-value="{p['predicted_winner']}"><strong>{p['predicted_winner']}</strong> ({location})</td>
+                    <td data-value="{p['spread']}">{p['spread']} <span style="color:#666">(Fav {p['spread_favorite']})</span></td>
+                    {spread_line_cell(p)}
+                    {delta_bucket_cell(p, bucket_baseline, bucket_stats)}
+                    <td data-value="{p['away_score'] + p['home_score']}">{p['away_team']} {int(p['away_score'])} - {int(p['home_score'])} {p['home_team']}</td>
+                    <td data-value="{miss}">{miss:+.2f} <span style="color:#666;font-size:12px">(model {p['cover_spread_by']:.2f} / actual {actual:+.2f})</span></td>
+                    <td data-value="{p['confidence']}">{p['confidence']}</td>
+                    <td data-value="{p['confidence_score']}">{p['confidence_score']:.2f}</td>
+                    {accuracy_cell}
+                    <td class="{'accuracy-good' if hit else 'accuracy-bad'}" data-value="{int(hit)}">
+                        {'✅ Correct' if hit else '❌ Wrong'}
+                    </td>
+                </tr>"""
+            )
+
+        correct = int(entries["correct"].sum())
+        total = len(entries)
+        accuracy_pct = correct / total * 100 if total else 0
+        avg_miss = (
+            (entries["cover_spread_by"] - entries.apply(actual_cover_margin, axis=1))
+            .abs()
+            .mean()
+        )
+
+        panels.append(
+            f"""
+            <div class="results-panel" data-key="{key}" hidden>
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <h3>Week Record</h3>
+                        <div class="value">{correct}/{total}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Week Accuracy</h3>
+                        <div class="value">{accuracy_pct:.1f}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Avg Cover Miss</h3>
+                        <div class="value">{avg_miss:.2f}</div>
+                    </div>
+                </div>
+                <table class="results-table">
+                    <thead><tr>
+                        <th>Matchup</th>
+                        <th>Pick</th>
+                        <th data-sort="num">Spread</th>
+                        <th data-sort="num">Spread Line</th>
+                        <th data-sort="num">Line Bucket</th>
+                        <th data-sort="num">Final</th>
+                        <th data-sort="num">Cover Diff</th>
+                        <th data-sort="num">Confidence</th>
+                        <th data-sort="num">Confidence Score</th>
+                        <th data-sort="num">Confidence Accuracy</th>
+                        <th data-sort="num">Result</th>
+                    </tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+            </div>"""
+        )
+
+    return f"""
+        <div class="stat-box">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <h2 style="margin:0;">✅ Results by Week</h2>
+                <select id="resultsWeekPicker" style="padding:6px 10px; font-size:14px;">
+                    {''.join(options)}
+                </select>
+            </div>
+            <p style="color:#666; font-size:13px;">
+                Games still to be played stay on the Future Predictions report until
+                they have a result. <strong>Cover Diff</strong> is how far the model's
+                predicted cover was from what actually happened - positive means the
+                pick covered by less than predicted.
+            </p>
+            {''.join(panels)}
+        </div>
+        {RESULTS_WEEK_SCRIPT}
+    """
+
+
 SEASON_ACCURACY_SCRIPT = """
 <script>
 (function () {
@@ -1398,6 +1639,8 @@ def generate_past_prediction_report(df, output_file="nfl_past_prediction_report.
                 <div class="value">{overall['accuracy']:.1f}%</div>
             </div>
         </div>
+        
+        {build_recent_results_table(df)}
         
         {build_season_accuracy_table(df)}
         

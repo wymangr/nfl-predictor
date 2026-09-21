@@ -5,9 +5,10 @@ import numpy as np
 import pandas as pd
 import nflreadpy as nfl
 from itertools import groupby
+from sqlalchemy import text
 
 from src.model.features import engineer_features
-from src.helpers.database_helpers import run_query, get_db_engine
+from src.helpers.database_helpers import add_missing_columns, run_query, get_db_engine
 from src.reports.past_predictions_analysis import (
     get_bucket_analysis,
     classify_prediction_bucket,
@@ -286,15 +287,23 @@ def get_future_predictions(spread_line=False, bucket=False):
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
 
+    # Predict the whole week so confidence ranks span the full slate, then keep
+    # only the games that have not been played.
     games_to_predict = run_query(
-        f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND (away_score IS NULL OR home_score IS NULL) AND td.yahoo_spread IS NOT NULL"
+        f"SELECT * FROM training_data td where td.season == {season} and td.week == {week} AND td.yahoo_spread IS NOT NULL"
     )
-    if len(games_to_predict) == 0:
+    games_df = pd.DataFrame(games_to_predict)
+    unplayed = games_df[games_df["home_score"].isna() | games_df["away_score"].isna()]
+    if unplayed.empty:
         print(f"No future games to predict for Week {week}, {season}.")
         return
 
-    games_df = pd.DataFrame(games_to_predict)
-    predictions = predict(games_df, model_artifacts, spread_line)
+    unplayed_ids = set(unplayed["game_id"])
+    predictions = [
+        p
+        for p in predict(games_df, model_artifacts, spread_line)
+        if p["game_id"] in unplayed_ids
+    ]
 
     sorted_predictions = sorted(
         predictions, key=lambda x: x["confidence"], reverse=False
@@ -395,11 +404,20 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
         else:
             current_week = nfl.get_current_week()
 
+        # Include unplayed games so confidence ranks match the full week slate,
+        # then grade only the games that have finished.
         game_to_predict = run_query(
-            f"SELECT * FROM training_data td where td.season == {season_year} and td.week <= {current_week} AND (away_score IS NOT NULL OR home_score IS NOT NULL) AND td.{spread_column} IS NOT NULL order by week asc"
+            f"SELECT * FROM training_data td where td.season == {season_year} and td.week <= {current_week} AND td.{spread_column} IS NOT NULL order by week asc"
         )
         games_df = pd.DataFrame(game_to_predict)
-        if games_df.empty:
+        if not games_df.empty:
+            played = games_df[
+                games_df["home_score"].notna() & games_df["away_score"].notna()
+            ]
+            played_ids = set(played["game_id"])
+        else:
+            played_ids = set()
+        if games_df.empty or not played_ids:
             if not quiet:
                 print(f"No past games to predict for season {season_year}.")
             continue
@@ -411,7 +429,11 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
         overall_correct = 0
         overall_correct_total = 0
 
-        predictions = predict(games_df, model_artifacts, spread_line)
+        predictions = [
+            p
+            for p in predict(games_df, model_artifacts, spread_line)
+            if p["game_id"] in played_ids
+        ]
 
         for prediction in sorted(predictions, key=lambda x: (x["week"])):
             if prediction["week"] != week:
@@ -453,7 +475,21 @@ def get_past_predictions(season="2025", spread_line=False, quiet=False):
     # Save all predictions to database
     if all_predictions:
         df = pd.DataFrame(all_predictions)
-        df.to_sql("past_predictions", conn, if_exists="replace", index=False)
+        # Only replace the seasons just processed; other seasons must survive.
+        seasons_str = ",".join(str(s) for s in seasons)
+        try:
+            with conn.connect() as connection:
+                connection.execute(
+                    text(
+                        f"DELETE FROM past_predictions WHERE season IN ({seasons_str})"
+                    )
+                )
+                connection.commit()
+        except Exception:
+            # Table doesn't exist yet
+            pass
+        add_missing_columns(conn, "past_predictions", df)
+        df.to_sql("past_predictions", conn, if_exists="append", index=False)
 
         # Print summary if multiple seasons
         if len(seasons) > 1 and not quiet:
@@ -701,11 +737,12 @@ def predict(games_df, model, spread_line=False):
         predictions.append(prediction)
 
     sorted_predictions = sorted(
-        predictions, key=lambda x: (x["week"], x["confidence_score"]), reverse=False
+        predictions, key=lambda x: (x["season"], x["week"], x["confidence_score"])
     )
-    for week, games in groupby(sorted_predictions, key=lambda x: x["week"]):
-        games_list = list(games)
-        for i, game in enumerate(games_list):
+    # Rank across the whole season/week slate so a game keeps its number as the
+    # rest of the week is played out.
+    for _, games in groupby(sorted_predictions, key=lambda x: (x["season"], x["week"])):
+        for i, game in enumerate(games):
             game["confidence"] = i + 1
 
     return predictions

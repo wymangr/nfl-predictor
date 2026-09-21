@@ -4,12 +4,33 @@ from datetime import datetime
 from src.helpers.database_helpers import run_query
 
 
-def generate_power_rankings_report(season=None):
+def fmt_sos(value):
+    """Teams with no completed opponents yet have no strength of schedule."""
+    return f"{value:.3f}" if value is not None else "—"
+
+
+def ranked_weeks_for(season):
+    """Weeks that have real rankings, oldest first.
+
+    The accumulated stats carry one forward-filled week past the last completed
+    games so upcoming fixtures can be predicted. That week has no SOS and no
+    ranking spread, so it is not offered as a choice.
+    """
+    rows = run_query(
+        f"SELECT DISTINCT week FROM team_power_rankings "
+        f"WHERE season = {season} AND sos IS NOT NULL ORDER BY week"
+    )
+    return [row["week"] for row in rows]
+
+
+def generate_power_rankings_report(season=None, week=None):
     """
     Generate an interactive HTML report for NFL team power rankings.
 
     Args:
         season: Season year to generate report for (default: newest season with data)
+        week: Week to show (default: newest week with rankings). Rankings are
+            lagged, so week N reflects games played through week N-1.
     """
     if season is None:
         rows = run_query("SELECT MAX(season) AS season FROM team_power_rankings")
@@ -28,8 +49,12 @@ def generate_power_rankings_report(season=None):
             f"No power ranking data for season {season}. Run `nfl data refresh` first."
         )
 
-    # Get current week data (latest week)
-    max_week = max(row["week"] for row in all_data)
+    usable = ranked_weeks_for(season)
+    if week is not None and week in {row["week"] for row in all_data}:
+        max_week = week
+    else:
+        max_week = max(usable) if usable else max(r["week"] for r in all_data)
+
     current_week_data = [row for row in all_data if row["week"] == max_week]
     # Sort by adjusted overall rank (lower is better)
     current_week_data.sort(key=lambda x: x["adj_overall_rank"])
@@ -375,7 +400,7 @@ def generate_power_rankings_report(season=None):
                             <td>{row['adj_offensive_rank']}</td>
                             <td>{row['adj_defensive_rank']}</td>
                             <td><strong>{row['adj_overall_rank']}</strong></td>
-                            <td>{row['sos']:.3f}</td>
+                            <td>{fmt_sos(row['sos'])}</td>
                             <td>{row['overall_rank']}</td>
                             <td style="color: {change_color}; font-weight: 600;">{change_icon} {abs(rank_change)}</td>
                         </tr>
@@ -410,7 +435,9 @@ def generate_power_rankings_report(season=None):
 """
 
     # Sort by SOS
-    sos_sorted = sorted(current_week_data, key=lambda x: x["sos"], reverse=True)
+    sos_sorted = sorted(
+        current_week_data, key=lambda x: (x["sos"] is None, -(x["sos"] or 0))
+    )
     for row in sos_sorted:
         rank_change = row["overall_rank"] - row["adj_overall_rank"]
         change_icon = "↑" if rank_change > 0 else ("↓" if rank_change < 0 else "→")
@@ -421,10 +448,10 @@ def generate_power_rankings_report(season=None):
         html += f"""
                         <tr>
                             <td><strong>{row['team']}</strong></td>
-                            <td>{row['sos']:.3f}</td>
+                            <td>{fmt_sos(row['sos'])}</td>
                             <td>
                                 <div class="progress-bar">
-                                    <div class="progress-fill" style="width: {row['sos'] * 100}%"></div>
+                                    <div class="progress-fill" style="width: {(row['sos'] or 0) * 100}%"></div>
                                 </div>
                             </td>
                             <td>{row['overall_rank']}</td>
@@ -555,7 +582,7 @@ def generate_power_rankings_report(season=None):
                             <td style="color: {def_color}; font-weight: 600;">{def_icon} {abs(def_change)}</td>
                             <td>{row['overall_rank']} → {row['adj_overall_rank']}</td>
                             <td style="color: {overall_color}; font-weight: 600;">{overall_icon} {abs(overall_change)}</td>
-                            <td>{row['sos']:.3f}</td>
+                            <td>{fmt_sos(row['sos'])}</td>
                         </tr>
 """
 
