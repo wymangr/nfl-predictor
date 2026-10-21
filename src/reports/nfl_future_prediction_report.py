@@ -4,7 +4,9 @@ from sqlalchemy import text
 
 from src.helpers.database_helpers import get_db_engine
 from src.reports.nfl_past_prediction_report import (
+    load_data as load_past_data,
     lookup_accuracy_metric,
+    save_accuracy_metrics_to_db,
     spread_line_cell,
 )
 
@@ -284,6 +286,9 @@ def load_future_predictions():
         ).fetchall()
         existing_columns = [col[1] for col in table_info]
 
+    if not existing_columns:
+        return pd.DataFrame()
+
     # Define all possible columns we want (in order of preference)
     desired_columns = [
         "game_id",
@@ -331,12 +336,14 @@ def load_future_predictions():
     query = text(
         f"""
         SELECT {', '.join('fp.' + col for col in columns_to_select)},
-               g.gameday, g.gametime, g.weekday, g.spread_line, ys.game_order
+               g.gameday, g.gametime, g.weekday, g.spread_line,
+               g.yahoo_spread AS current_yahoo_spread, ys.game_order
         FROM future_predictions fp
         LEFT JOIN games g ON fp.game_id = g.game_id
         LEFT JOIN yahoo_spreads ys
             ON ys.season = fp.season AND ys.week = fp.week
             AND ys.home_team = fp.home_team AND ys.away_team = fp.away_team
+        WHERE g.home_score IS NULL OR g.away_score IS NULL
         ORDER BY fp.week, fp.confidence DESC
     """
     )
@@ -1077,6 +1084,28 @@ def format_kickoff(prediction):
     return stamp.strftime("%a %m/%d %I:%M %p")
 
 
+def current_yahoo_spread_cell(prediction):
+    """Current database line, without overwriting the spread used for the pick."""
+    line = prediction.get("current_yahoo_spread")
+    if line is None or pd.isna(line):
+        return '<td data-value="">—</td>'
+    favorite = prediction["home_team"] if line < 0 else prediction["away_team"]
+    return (
+        f'<td data-value="{line}">{abs(line):g} '
+        f'<span style="color:#666">(Fav {favorite})</span></td>'
+    )
+
+
+def yahoo_line_changed(prediction):
+    line = prediction.get("current_yahoo_spread")
+    if line is None or pd.isna(line):
+        return False
+    saved = abs(prediction["spread"])
+    if prediction["spread_favorite"] == prediction["home_team"]:
+        saved = -saved
+    return abs(line - saved) > 1e-8
+
+
 def build_picks_table(df):
     """Summary table mirroring the `nfl model predict future` console output."""
     from src.model.predict import confidence_accuracy
@@ -1107,6 +1136,8 @@ def build_picks_table(df):
             warnings.append(f"⚠️ {p['home_team']} QB change")
         if p.get("away_qb_changed") == "Y":
             warnings.append(f"⚠️ {p['away_team']} QB change")
+        if yahoo_line_changed(p):
+            warnings.append("⚠️ Yahoo line changed since prediction; saved pick unchanged")
 
         location = "Home" if p["predicted_winner"] == p["home_team"] else "Away"
         # Trailing rank keeps games inside a shared kickoff in Yahoo's own order.
@@ -1123,6 +1154,7 @@ def build_picks_table(df):
                 <td>{p['away_team']} @ {p['home_team']}</td>
                 <td><strong>{p['predicted_winner']}</strong> ({location})</td>
                 <td data-value="{p['spread']}">{p['spread']} <span style="color:#666">(Fav {p['spread_favorite']})</span></td>
+                {current_yahoo_spread_cell(p)}
                 {spread_line_cell(p)}
                 {delta_bucket_cell(p, bucket_baseline, bucket_stats)}
                 <td data-value="{p['cover_spread_by']}">{p['cover_spread_by']:.2f}</td>
@@ -1141,7 +1173,9 @@ def build_picks_table(df):
             <p style="color:#666; font-size:13px; margin-top:0;">
                 Listed in the same order as the Yahoo pick sheet. Click any column
                 to sort. A positive predicted diff means the home team is expected
-                to win.
+                to win. Saved Spread is the line used for the pick; Current Yahoo
+                and Spread Line show the latest database lines. Changed lines do
+                not recalculate saved picks or confidence ranks.
             </p>
             <table id="picksTable">
                 <thead>
@@ -1150,7 +1184,8 @@ def build_picks_table(df):
                         <th data-sort="num">Confidence</th>
                         <th data-sort="text">Matchup</th>
                         <th data-sort="text">Pick</th>
-                        <th data-sort="num">Spread</th>
+                        <th data-sort="num">Saved Spread</th>
+                        <th data-sort="num">Current Yahoo</th>
                         <th data-sort="num">Spread Line</th>
                         <th data-sort="num">Line Bucket</th>
                         <th data-sort="num">Cover By</th>
@@ -1299,9 +1334,25 @@ def generate_future_predictions_report(output_file="nfl_future_prediction_report
 
     if len(df) == 0:
         print("⚠️  No future predictions found in database")
+        # Do not leave the previous report showing games that were just archived.
+        with open(output_file, "w", encoding="utf-8") as report:
+            report.write(
+                '<!doctype html><html lang="en"><meta charset="utf-8">'
+                '<title>Future Predictions</title>'
+                '<body style="font:16px system-ui;padding:2rem">'
+                '<h1>No remaining saved future predictions</h1>'
+                '<p>No upcoming games with prediction-ready data and Yahoo spreads '
+                'were found. Run Full Refresh to update the data; the dashboard '
+                'will create the next slate automatically when available.</p></body></html>'
+            )
         return
 
     print(f"📊 Analyzing {len(df)} future predictions...")
+
+    # This is derived report data, not model prediction data. Rebuild it from
+    # saved outcomes so first-time viewing and mid-week grading need no visit
+    # to Past Predictions first, and never use an out-of-date metric cache.
+    save_accuracy_metrics_to_db(load_past_data())
 
     # Calculate metric reliability data once (used for all predictions)
     print("   📈 Calculating metric reliability scores...")

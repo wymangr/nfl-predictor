@@ -65,7 +65,7 @@ def data():
 @click.option(
     "--backup",
     is_flag=True,
-    help="Create a backup of the database before refreshing data.",
+    help="Back up before a spreads-only refresh; full refreshes always back up.",
 )
 @click.option(
     "--backfill-date",
@@ -81,9 +81,9 @@ def data():
 def refresh(backfill_date, backup, spreads):
     """Refresh NFL data from sources."""
     print("Running: nfl data refresh")
-    if backup:
-        backup_database()
     if spreads:
+        if backup:
+            backup_database()
         update_current_spreads()
     else:
         backfil_data(backfill_date)

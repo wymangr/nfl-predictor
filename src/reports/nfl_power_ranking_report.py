@@ -197,6 +197,34 @@ def generate_power_rankings_report(season=None, week=None):
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }}
+
+        #current-rankings th {{
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }}
+
+        #current-rankings th:hover,
+        #current-rankings th:focus-visible {{
+            background-color: #1e40af;
+            outline: 2px solid white;
+            outline-offset: -3px;
+        }}
+
+        #current-rankings th::after {{
+            content: ' ↕';
+            opacity: 0.45;
+        }}
+
+        #current-rankings th.sort-asc::after {{
+            content: ' ▲';
+            opacity: 1;
+        }}
+
+        #current-rankings th.sort-desc::after {{
+            content: ' ▼';
+            opacity: 1;
+        }}
         
         td {{
             padding: 12px 15px;
@@ -360,19 +388,19 @@ def generate_power_rankings_report(season=None, week=None):
                     <h4>📌 About These Rankings</h4>
                     <p>The <strong>Adjusted Rankings</strong> (shown in the main rank column) account for strength of schedule and provide the most accurate assessment of team performance. Original rankings are shown for comparison to illustrate the impact of SOS adjustments.</p>
                 </div>
-                <table>
+                <table id="current-rankings">
                     <thead>
                         <tr>
-                            <th>Rank</th>
-                            <th>Team</th>
-                            <th>Power Rating</th>
-                            <th>Win %</th>
-                            <th>Adj Off</th>
-                            <th>Adj Def</th>
-                            <th>Adj Overall</th>
-                            <th>SOS</th>
-                            <th>Orig Overall</th>
-                            <th>Change</th>
+                            <th data-sort="num" tabindex="0" aria-sort="ascending">Rank</th>
+                            <th data-sort="text" tabindex="0" aria-sort="none">Team</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Power Rating</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Win %</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Adj Off</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Adj Def</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Adj Overall</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">SOS</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Orig Overall</th>
+                            <th data-sort="num" tabindex="0" aria-sort="none">Change</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -393,16 +421,16 @@ def generate_power_rankings_report(season=None, week=None):
 
         html += f"""
                         <tr>
-                            <td><span class="rank-badge {rank_class}">{idx}</span></td>
+                            <td data-value="{idx}"><span class="rank-badge {rank_class}">{idx}</span></td>
                             <td><strong>{row['team']}</strong></td>
-                            <td>{row['power_ranking']:.4f}</td>
-                            <td>{row['win_pct']:.1%}</td>
-                            <td>{row['adj_offensive_rank']}</td>
-                            <td>{row['adj_defensive_rank']}</td>
-                            <td><strong>{row['adj_overall_rank']}</strong></td>
-                            <td>{fmt_sos(row['sos'])}</td>
-                            <td>{row['overall_rank']}</td>
-                            <td style="color: {change_color}; font-weight: 600;">{change_icon} {abs(rank_change)}</td>
+                            <td data-value="{row['power_ranking']}">{row['power_ranking']:.4f}</td>
+                            <td data-value="{row['win_pct']}">{row['win_pct']:.1%}</td>
+                            <td data-value="{row['adj_offensive_rank']}">{row['adj_offensive_rank']}</td>
+                            <td data-value="{row['adj_defensive_rank']}">{row['adj_defensive_rank']}</td>
+                            <td data-value="{row['adj_overall_rank']}"><strong>{row['adj_overall_rank']}</strong></td>
+                            <td data-value="{row['sos'] if row['sos'] is not None else ''}">{fmt_sos(row['sos'])}</td>
+                            <td data-value="{row['overall_rank']}">{row['overall_rank']}</td>
+                            <td data-value="{rank_change}" style="color: {change_color}; font-weight: 600;">{change_icon} {abs(rank_change)}</td>
                         </tr>
 """
 
@@ -699,6 +727,58 @@ def generate_power_rankings_report(season=None, week=None):
             }});
             updateChart();
         }}
+
+        function initializeRankingsSort() {{
+            const table = document.getElementById('current-rankings');
+            const tbody = table.tBodies[0];
+            const headers = Array.from(table.querySelectorAll('th'));
+            let sortedIndex = 0;
+            let ascending = true;
+
+            function cellValue(cell, numeric) {{
+                const raw = cell.dataset.value !== undefined
+                    ? cell.dataset.value
+                    : cell.textContent.trim();
+                if (!numeric) return raw.toLowerCase();
+                const parsed = Number.parseFloat(raw);
+                return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+            }}
+
+            function sortBy(index) {{
+                ascending = sortedIndex === index ? !ascending : true;
+                sortedIndex = index;
+                const numeric = headers[index].dataset.sort === 'num';
+                const rows = Array.from(tbody.rows);
+
+                rows.sort((leftRow, rightRow) => {{
+                    const left = cellValue(leftRow.cells[index], numeric);
+                    const right = cellValue(rightRow.cells[index], numeric);
+                    if (left < right) return ascending ? -1 : 1;
+                    if (left > right) return ascending ? 1 : -1;
+                    return 0;
+                }});
+                rows.forEach(row => tbody.appendChild(row));
+
+                headers.forEach(header => {{
+                    header.classList.remove('sort-asc', 'sort-desc');
+                    header.setAttribute('aria-sort', 'none');
+                }});
+                const activeHeader = headers[index];
+                activeHeader.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+                activeHeader.setAttribute('aria-sort', ascending ? 'ascending' : 'descending');
+            }}
+
+            headers.forEach((header, index) => {{
+                header.addEventListener('click', () => sortBy(index));
+                header.addEventListener('keydown', event => {{
+                    if (event.key === 'Enter' || event.key === ' ') {{
+                        event.preventDefault();
+                        sortBy(index);
+                    }}
+                }});
+            }});
+            headers[0].classList.add('sort-asc');
+        }}
         
         // Offensive vs Defensive scatter plot
         function createOffDefChart() {{
@@ -760,6 +840,7 @@ def generate_power_rankings_report(season=None, week=None):
         }}
         
         // Initialize charts
+        initializeRankingsSort();
         updateChart();
         createOffDefChart();
     </script>

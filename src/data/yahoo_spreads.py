@@ -257,7 +257,8 @@ class YahooSpreadClient:
 
         season = get_league_season()
         url = f"{self.base_url}?gid=&week={week}&type=s"
-        resp = requests.get(url)
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
         # Find all Favorite and Underdog tags and pair them

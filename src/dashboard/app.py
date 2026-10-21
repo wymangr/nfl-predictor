@@ -15,6 +15,7 @@ from src.dashboard.reports import (
     render,
 )
 from src.data.data import backfil_data
+from src.data.refresh_week import refresh_current_week
 from src.data.update_spreads import update_current_spreads
 from src.model.train import train_model
 
@@ -25,6 +26,7 @@ _task_lock = threading.Lock()
 
 _TASKS = {
     "spreads": update_current_spreads,
+    "week": refresh_current_week,
     "full": backfil_data,
     "train": train_model,
 }
@@ -36,7 +38,7 @@ def _error_page(title: str, detail: str) -> str:
         "<style>body{font:14px/1.5 system-ui,sans-serif;padding:2rem;color:#c92a2a}"
         "pre{white-space:pre-wrap;color:#495057;background:#f1f3f5;padding:1rem;"
         "border-radius:6px}</style>"
-        f"<h2>{html.escape(title)}</h2><pre>{html.escape(detail)}</pre>"
+        f'<h2 data-report-error>{html.escape(title)}</h2><pre>{html.escape(detail)}</pre>'
     )
 
 
@@ -77,6 +79,8 @@ def report(key: str):
 
     force = request.args.get("force") == "1"
 
+    if not _task_lock.acquire(blocking=False):
+        return _error_page("Refresh in progress", "Wait for the current task to finish, then reload this report."), 409
     try:
         body = render(entry, season=season, week=week, force=force)
     except ReportNotBuilt:
@@ -86,7 +90,9 @@ def report(key: str):
             'automatically. Click "Regenerate" to build it.',
         )
     except Exception:
-        return _error_page(f"{entry.label} failed to generate", traceback.format_exc())
+        return _error_page(f"{entry.label} failed to generate", traceback.format_exc()), 500
+    finally:
+        _task_lock.release()
 
     if entry.kind == "text":
         return (
@@ -127,14 +133,15 @@ def run_task(task: str):
 
     started = time.monotonic()
     try:
-        action()
+        result = action()
     except Exception as exc:
         traceback.print_exc()
         return jsonify(ok=False, error=f"{type(exc).__name__}: {exc}"), 500
     finally:
         _task_lock.release()
 
-    return jsonify(ok=True, seconds=round(time.monotonic() - started))
+    summary = result if task == "week" and isinstance(result, dict) else None
+    return jsonify(ok=True, seconds=round(time.monotonic() - started), summary=summary)
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:

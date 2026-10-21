@@ -1,11 +1,14 @@
 ## nflreadr Status: https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html
 
+from pathlib import Path
+
 import nflreadpy as nfl
 import pandas as pd
 from sqlalchemy import text
 
 from src.helpers.database_helpers import add_missing_columns, get_db_engine
 from src.helpers.season_helpers import get_league_season
+from src.data.backup import backup_database
 from src.data.yahoo_spreads import YahooSpreadClient
 
 
@@ -667,6 +670,13 @@ def _load_team_stats(seasons: list[int]):
 
 
 def backfil_data(backfil_season: int = 2003):
+    # Both the dashboard and CLI use this entry point. A failed backup must
+    # stop the refresh before Yahoo lines or any other data can be replaced.
+    if Path("nfl-prediction.db").exists():
+        backup_database()
+    else:
+        print("No existing database to back up; starting initial data load.")
+
     # nflreadpy memoises downloads for 24h, so a long-lived caller (the dashboard)
     # would otherwise refresh from a stale in-process copy.
     nfl.clear_cache()
@@ -1878,6 +1888,12 @@ def backfil_data(backfil_season: int = 2003):
         f"✓ Database updated for seasons: {min(seasons_to_update)}-{max(seasons_to_update)}"
     )
     print(f"  Historical data from other seasons preserved")
+
+    # Rebuilding scores does not regenerate saved predictions. Move scored
+    # saved picks to history, including the week that just ended on Monday.
+    from src.data.refresh_week import reconcile_completed_predictions
+
+    reconcile_completed_predictions()
 
 
 if __name__ == "__main__":

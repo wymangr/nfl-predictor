@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import nflreadpy as nfl
 from itertools import groupby
-from sqlalchemy import text
+from sqlalchemy import Text, inspect, text
 
 from src.model.features import engineer_features
 from src.helpers.database_helpers import add_missing_columns, run_query, get_db_engine
@@ -173,6 +173,10 @@ def cover_spread_by(
 
 
 def confidence_accuracy(confidence_score: float) -> str:
+    # Some historical games lack the prior-week inputs for a confidence score.
+    if pd.isna(confidence_score):
+        return math.nan, 0
+
     confidence_accuracy = run_query(
         f"""SELECT 
             AVG(CAST(correct AS FLOAT)) * 100 AS accuracy_percentage,
@@ -257,11 +261,23 @@ def get_bucket_confidence_accuracy(prediction_dict, bucket_df):
     return weighted_acc, None, 0
 
 
-def get_future_predictions(spread_line=False, bucket=False):
+def _has_prediction_history(engine):
+    with engine.connect() as connection:
+        if not inspect(connection).has_table("past_predictions"):
+            return False
+        return connection.execute(text("SELECT 1 FROM past_predictions LIMIT 1")).first() is not None
 
-    conn = get_db_engine()
-    model_artifacts = load_model("nfl-prediction.pkl")
 
+def get_future_predictions(spread_line=False, bucket=False, *, refresh_past=True):
+    """Generate a future slate; the dashboard preserves nonempty saved history."""
+    engine = get_db_engine()
+    try:
+        return _generate_future_predictions(engine, spread_line, bucket, refresh_past)
+    finally:
+        engine.dispose()
+
+
+def _generate_future_predictions(conn, spread_line, bucket, refresh_past):
     # Target the earliest unplayed week that has spreads rather than trusting
     # nflreadpy's current week, which lags into the start of a new season.
     next_week = run_query(
@@ -274,15 +290,12 @@ def get_future_predictions(spread_line=False, bucket=False):
         return
     season = next_week[0]["season"]
     week = next_week[0]["week"]
+    model_artifacts = load_model("nfl-prediction.pkl")
 
-    # Run past predictions to update past data for confidence metrics
-    get_past_predictions(season="all", spread_line=spread_line, quiet=True)
-
-    # Load bucket analysis if requested
-    bucket_df = None
-    if bucket:
-        print("Loading bucket analysis for confidence calculation...")
-        bucket_df = get_bucket_analysis("past_predictions")
+    # Restore the old first-run setup, but never replace nonempty saved history
+    # just because the dashboard needs the next slate.
+    if refresh_past or not _has_prediction_history(conn):
+        get_past_predictions(season="all", spread_line=spread_line, quiet=True)
 
     if spread_line:
         print("Using nflreadpy spread line for predictions.")
@@ -304,6 +317,19 @@ def get_future_predictions(spread_line=False, bucket=False):
         for p in predict(games_df, model_artifacts, spread_line)
         if p["game_id"] in unplayed_ids
     ]
+    if not predictions:
+        return
+
+    df = pd.DataFrame(predictions)
+    # A fresh database may have no played games yet. Give report/accuracy queries
+    # an empty, correctly typed history table instead of failing or inventing rows.
+    if not inspect(conn).has_table("past_predictions"):
+        df.head(0).to_sql("past_predictions", conn, index=False, dtype={"correct": Text()})
+
+    bucket_df = None
+    if bucket:
+        print("Loading bucket analysis for confidence calculation...")
+        bucket_df = get_bucket_analysis("past_predictions")
 
     sorted_predictions = sorted(
         predictions, key=lambda x: x["confidence"], reverse=False
@@ -344,8 +370,11 @@ def get_future_predictions(spread_line=False, bucket=False):
         output += warning
         print(output)
 
-    df = pd.DataFrame(predictions)
-    df.to_sql("future_predictions", conn, if_exists="replace", index=False)
+    # to_sql(replace) otherwise commits DROP/CREATE separately from INSERT on
+    # SQLite. A failed insert must leave the previous saved slate intact.
+    with conn.begin() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        df.to_sql("future_predictions", connection, if_exists="replace", index=False)
 
 
 def get_past_predictions(season="2025", spread_line=False, quiet=False):

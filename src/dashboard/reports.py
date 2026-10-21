@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.helpers.database_helpers import run_query
+from src.data.refresh_week import reconcile_completed_predictions
 from src.model.predict import get_future_predictions
 from src.reports.analyze_future_bucket_confidence import print_future_analysis
 from src.reports.analyze_past_bucket_confidence import print_past_bucket_analysis
@@ -39,6 +40,7 @@ class Report:
     cached: bool = False
     seasons_param: bool = False
     weeks_param: bool = False
+    regenerate: Callable[..., None] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, compare=False)
 
 
@@ -49,7 +51,19 @@ def _past_predictions() -> None:
 
 
 def _future_predictions() -> None:
-    get_future_predictions()
+    reconcile_completed_predictions()
+    tables = run_query("SELECT name FROM sqlite_master WHERE type='table' AND name='future_predictions'")
+    saved = run_query("SELECT 1 FROM future_predictions LIMIT 1") if tables else []
+    # Keep existing mid-week picks, but automatically create the next slate
+    # after a full refresh has supplied its features/lines and the old one ended.
+    if not saved:
+        get_future_predictions(refresh_past=False)
+    generate_future_predictions_report()
+
+
+def _regenerate_future_predictions() -> None:
+    reconcile_completed_predictions()
+    get_future_predictions(refresh_past=False)
     generate_future_predictions_report()
 
 
@@ -65,9 +79,10 @@ REPORTS: dict[str, Report] = {
         Report(
             key="future-predictions",
             label="Future Predictions",
-            description="Re-runs the model, then shows picks and confidence metrics.",
+            description="Saved picks; automatically creates the next slate when empty. Regenerate recalculates picks.",
             kind="html",
             generate=_future_predictions,
+            regenerate=_regenerate_future_predictions,
             output_file=lambda **_: Path("nfl_future_prediction_report.html"),
         ),
         Report(
@@ -193,5 +208,6 @@ def render(
             if not path.exists():
                 raise ReportNotBuilt(report.key)
         else:
-            report.generate(**kwargs)
+            generate = report.regenerate if force and report.regenerate else report.generate
+            generate(**kwargs)
         return path.read_text(encoding="utf-8")

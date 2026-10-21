@@ -62,6 +62,7 @@
   main { display: flex; flex-direction: column; min-width: 0; }
   header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: .75rem;
     padding: .75rem 1rem;
@@ -127,6 +128,7 @@
     <button id="refresh" disabled>Regenerate</button>
     <span class="divider"></span>
     <button id="refreshSpreads" title="nfl data refresh --spreads">Refresh Spreads</button>
+    <button id="refreshWeek" title="Fetch this week's game data, QB information, and spreads; keep saved predictions unchanged">Refresh This Week</button>
     <button id="refreshAll" title="nfl data refresh">Full Refresh</button>
     <button id="trainModel" title="nfl model train">Train Model</button>
   </header>
@@ -143,6 +145,8 @@
   const weekSelect = document.getElementById('week');
   const refresh = document.getElementById('refresh');
   let current = null;
+  let taskRunning = false;
+  let reportLoading = false;
 
   function url(force) {
     const params = new URLSearchParams();
@@ -163,8 +167,9 @@
 
   function load(force) {
     if (!current) return;
+    reportLoading = true;
+    syncControls();
     setStatus(force ? 'Regenerating…' : 'Loading…');
-    refresh.disabled = true;
     empty.hidden = true;
     frame.hidden = false;
     frame.src = url(force);
@@ -172,12 +177,14 @@
 
   frame.addEventListener('load', () => {
     if (!current) return;
-    setStatus('Updated ' + new Date().toLocaleTimeString());
-    refresh.disabled = false;
+    reportLoading = false;
+    const failure = frame.contentDocument?.querySelector('[data-report-error]');
+    setStatus(failure ? failure.textContent : 'Updated ' + new Date().toLocaleTimeString(), Boolean(failure));
+    syncControls();
   });
 
   document.querySelectorAll('aside button').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       document.querySelectorAll('aside button').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       current = {
@@ -187,6 +194,7 @@
       title.textContent = btn.dataset.label;
       seasonSelect.hidden = !current.seasons;
       weekSelect.hidden = !current.seasons;
+      if (current.seasons) await loadWeeks();
       load(false);
     });
   });
@@ -196,11 +204,23 @@
     load(false);
   });
   weekSelect.addEventListener('change', () => load(false));
-  refresh.addEventListener('click', () => load(true));
+  refresh.addEventListener('click', () => {
+    if (current.key === 'future-predictions' &&
+        !confirm('Regenerate recalculates predictions and confidence ranks. To preserve saved picks, use Refresh This Week instead. Continue?')) return;
+    load(true);
+  });
 
   const refreshSpreads = document.getElementById('refreshSpreads');
+  const refreshWeek = document.getElementById('refreshWeek');
   const refreshAll = document.getElementById('refreshAll');
   const trainModel = document.getElementById('trainModel');
+
+  function syncControls() {
+    const busy = taskRunning || reportLoading;
+    [refreshSpreads, refreshWeek, refreshAll, trainModel, seasonSelect, weekSelect,
+      ...document.querySelectorAll('aside button')].forEach((b) => (b.disabled = busy));
+    refresh.disabled = busy || !current;
+  }
 
   function setStatus(text, isError) {
     status.textContent = text;
@@ -208,8 +228,9 @@
   }
 
   async function runTask(task, label) {
-    const buttons = [refreshSpreads, refreshAll, trainModel, refresh];
-    buttons.forEach((b) => (b.disabled = true));
+    if (taskRunning || reportLoading) return;
+    taskRunning = true;
+    syncControls();
     const started = Date.now();
     const tick = setInterval(() => {
       setStatus(`${label}… ${Math.round((Date.now() - started) / 1000)}s`);
@@ -223,18 +244,23 @@
       });
       const body = await res.json();
       if (!body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      clearInterval(tick);
       setStatus(`${label} done in ${body.seconds}s`);
-      if (current) load(false);
+      if (current) {
+        if (current.seasons) await loadWeeks();
+        load(false);
+      }
     } catch (err) {
       setStatus(`${label} failed: ${err.message}`, true);
     } finally {
       clearInterval(tick);
-      buttons.forEach((b) => (b.disabled = false));
-      refresh.disabled = !current;
+      taskRunning = false;
+      syncControls();
     }
   }
 
   refreshSpreads.addEventListener('click', () => runTask('spreads', 'Refreshing spreads'));
+  refreshWeek.addEventListener('click', () => runTask('week', 'Refreshing this week'));
   refreshAll.addEventListener('click', () => {
     if (confirm('A full refresh rebuilds every season and takes several minutes. Continue?')) {
       runTask('full', 'Full refresh');

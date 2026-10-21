@@ -1269,8 +1269,16 @@ def build_recent_results_table(df):
             actual = actual_cover_margin(p)
             miss = p["cover_spread_by"] - actual
 
-            accuracy, sample_size = confidence_accuracy(p["confidence_score"])
-            if sample_size == 0:
+            score = p["confidence_score"]
+            score_cell = (
+                '<td data-value="">N/A</td>'
+                if pd.isna(score)
+                else f'<td data-value="{score}">{score:.2f}</td>'
+            )
+            accuracy, sample_size = confidence_accuracy(score)
+            if pd.isna(score):
+                accuracy_cell = '<td data-value="">N/A</td>'
+            elif sample_size == 0:
                 accuracy_cell = '<td class="accuracy-bad" data-value="">no history</td>'
             else:
                 accuracy_cell = (
@@ -1290,7 +1298,7 @@ def build_recent_results_table(df):
                     <td data-value="{p['away_score'] + p['home_score']}">{p['away_team']} {int(p['away_score'])} - {int(p['home_score'])} {p['home_team']}</td>
                     <td data-value="{miss}">{miss:+.2f} <span style="color:#666;font-size:12px">(model {p['cover_spread_by']:.2f} / actual {actual:+.2f})</span></td>
                     <td data-value="{p['confidence']}">{p['confidence']}</td>
-                    <td data-value="{p['confidence_score']}">{p['confidence_score']:.2f}</td>
+                    {score_cell}
                     {accuracy_cell}
                     <td class="{'accuracy-good' if hit else 'accuracy-bad'}" data-value="{int(hit)}">
                         {'✅ Correct' if hit else '❌ Wrong'}
@@ -1382,6 +1390,104 @@ SEASON_ACCURACY_SCRIPT = """
 """
 
 
+def build_confidence_rank_chart(df):
+    """Observed accuracy at each saved confidence rank, without changing picks."""
+    values = pd.DataFrame(
+        {
+            "confidence": pd.to_numeric(df["confidence"], errors="coerce"),
+            "correct": pd.to_numeric(df["correct"], errors="coerce"),
+        }
+    )
+    graded = values[
+        values["correct"].isin([0, 1])
+        & values["confidence"].ge(1)
+        & values["confidence"].mod(1).eq(0)
+    ]
+    if graded.empty:
+        return '<p class="confidence-chart-empty">No graded confidence ranks available.</p>'
+
+    stats = graded.groupby("confidence").agg(
+        correct=("correct", "sum"), total=("correct", "count")
+    )
+    max_rank = int(stats.index.max())
+    stats = stats.reindex(range(1, max_rank + 1), fill_value=0)
+
+    left, top, plot_height = 72, 36, 230
+    plot_width = max(640, max_rank * 56)
+    width, height = left + plot_width + 24, 356
+    bottom = top + plot_height
+    step = plot_width / max_rank
+    bar_width = min(38, step * 0.65)
+
+    grid = []
+    for tick in range(0, 101, 20):
+        y = bottom - tick / 100 * plot_height
+        grid.append(
+            f'<line x1="{left}" y1="{y}" x2="{left + plot_width}" y2="{y}" stroke="#e2e8f0" />'
+            f'<text x="{left - 12}" y="{y + 4}" text-anchor="end" fill="#64748b">{tick}%</text>'
+        )
+
+    bars = []
+    for rank, row in stats.iterrows():
+        rank = int(rank)
+        correct, total = int(row["correct"]), int(row["total"])
+        accuracy = correct / total * 100 if total else None
+        center = left + (rank - 0.5) * step
+        bar_height = accuracy / 100 * plot_height if total else 0
+        label = f"{accuracy:.1f}%" if total else "N/A"
+        count_label = f"{correct}/{total}" if total else "—"
+        detail = (
+            f"Confidence {rank}: {correct} of {total} correct ({accuracy:.2f}%)"
+            if total else f"Confidence {rank}: no graded picks"
+        )
+        bar = (
+            f'<rect class="confidence-bar" x="{center - bar_width / 2}" '
+            f'y="{bottom - bar_height}" width="{bar_width}" height="{bar_height}" rx="3" />'
+            if total else ""
+        )
+        bars.append(
+            f'<g class="confidence-rank" tabindex="0" role="img" aria-label="{detail}" '
+            f'data-rank="{rank}" data-correct="{correct}" data-total="{total}" '
+            f'data-accuracy="{accuracy if total else ""}">'
+            f'<title>{detail}</title>'
+            f'<rect class="confidence-hit-area" x="{center - step / 2}" y="0" '
+            f'width="{step}" height="{bottom + 48}" fill="transparent" />'
+            f'{bar}'
+            f'<text class="confidence-percent" x="{center}" y="{bottom - bar_height - 9}" '
+            f'text-anchor="middle">{label}</text>'
+            f'<text x="{center}" y="{bottom + 22}" text-anchor="middle">{rank}</text>'
+            f'<text x="{center}" y="{bottom + 43}" text-anchor="middle" fill="#64748b">'
+            f'{count_label}</text></g>'
+        )
+
+    return f"""
+        <section class="confidence-rank-chart">
+            <h3>Confidence Rank Accuracy</h3>
+            <p>How often each confidence number was correct across all saved seasons.
+                The season selector above does not filter this chart.
+                Rank 1 is the lowest confidence; higher numbers are higher confidence.
+                This uses the saved rank, not the 0–100 confidence score.</p>
+            <figure>
+                <div class="confidence-chart-scroll">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"
+                         width="{width}" height="{height}" style="min-width:{width}px"
+                         role="group" aria-label="Accuracy by confidence rank">
+                        {''.join(grid)}
+                        {''.join(bars)}
+                        <text x="18" y="{top + plot_height / 2}" text-anchor="middle"
+                              transform="rotate(-90 18 {top + plot_height / 2})">Accuracy (%)</text>
+                        <text x="{left + plot_width / 2}" y="{height - 12}"
+                              text-anchor="middle">Confidence rank</text>
+                    </svg>
+                </div>
+                <figcaption>Counts below each rank are correct / graded picks.
+                    Pushes and ungraded games are excluded; missing ranks show N/A.
+                    Small samples can be misleading.</figcaption>
+            </figure>
+        </section>
+    """
+
+
 def build_season_accuracy_table(df):
     """Week-by-week accuracy per season, mirroring `nfl model predict past`."""
     seasons = sorted(df["season"].unique(), reverse=True)
@@ -1447,6 +1553,7 @@ def build_season_accuracy_table(df):
                 Pushes are excluded.
             </p>
             {''.join(panels)}
+            {build_confidence_rank_chart(df)}
         </div>
         {SEASON_ACCURACY_SCRIPT}
     """
@@ -1616,6 +1723,32 @@ def generate_past_prediction_report(df, output_file="nfl_past_prediction_report.
                 gap: 20px;
                 margin: 20px 0;
             }}
+            .confidence-rank-chart {{
+                margin-top: 28px;
+                padding-top: 8px;
+                border-top: 1px solid #e2e8f0;
+            }}
+            .confidence-rank-chart h3 {{ color: #013369; }}
+            .confidence-rank-chart p, .confidence-rank-chart figcaption {{
+                color: #64748b;
+                font-size: 13px;
+                line-height: 1.5;
+            }}
+            .confidence-rank-chart figure {{ margin: 16px 0 0; }}
+            .confidence-chart-scroll {{ overflow-x: auto; }}
+            .confidence-rank-chart svg {{
+                display: block;
+                width: 100%;
+                height: auto;
+                font: 12px Arial, sans-serif;
+                fill: #334155;
+            }}
+            .confidence-bar {{ fill: #4f70d9; }}
+            .confidence-percent {{ font-weight: bold; }}
+            .confidence-rank:hover .confidence-bar,
+            .confidence-rank:focus .confidence-bar {{ fill: #013369; }}
+            .confidence-rank:hover .confidence-hit-area,
+            .confidence-rank:focus .confidence-hit-area {{ fill: #01336908; }}
         </style>
     </head>
     <body>
@@ -2104,13 +2237,13 @@ def save_accuracy_metrics_to_db(df):
     )
     """
 
-    with engine.connect() as conn:
-        conn.execute(text(create_table_query))
-        conn.commit()
-
-        # Clear existing data
-        conn.execute(text("DELETE FROM prediction_accuracy_metrics"))
-        conn.commit()
+    if df.empty:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            conn.execute(text(create_table_query))
+            conn.execute(text("DELETE FROM prediction_accuracy_metrics"))
+        engine.dispose()
+        return
 
     # Prepare all metrics for insertion
     metrics_data = []
@@ -2562,9 +2695,18 @@ def save_accuracy_metrics_to_db(df):
 
     # Convert to DataFrame and insert
     metrics_df = pd.DataFrame(metrics_data)
-    metrics_df.to_sql(
-        "prediction_accuracy_metrics", engine, if_exists="append", index=False
-    )
+    # Compute before clearing, and replace inside one transaction. A failed
+    # calculation/write must not leave an empty or half-written metric cache.
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            conn.execute(text(create_table_query))
+            conn.execute(text("DELETE FROM prediction_accuracy_metrics"))
+            metrics_df.to_sql(
+                "prediction_accuracy_metrics", conn, if_exists="append", index=False
+            )
+    finally:
+        engine.dispose()
 
     print(f"\n✅ Saved {len(metrics_data)} accuracy metrics to database")
     print(f"   Metric types: {metrics_df['metric_type'].nunique()}")

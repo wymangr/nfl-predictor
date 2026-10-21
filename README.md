@@ -117,7 +117,7 @@ nfl data refresh [--backup] [--backfill-date YEAR] [--spreads]
 ```
 
 **Options:**
-- `--backup`: Create a database backup before refreshing data
+- `--backup`: Also back up before a `--spreads` refresh; full refreshes always back up, with or without this flag
 - `--backfill-date YEAR`: Specify the starting year for data backfill (default: 2003)
 - `--spreads`: Update current week spread data only (faster, for weekly updates)
 
